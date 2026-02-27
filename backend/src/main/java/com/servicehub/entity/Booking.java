@@ -1,12 +1,16 @@
 package com.servicehub.entity;
 
 import jakarta.persistence.*;
-import java.time.LocalDateTime;
-
+import lombok.*;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "bookings")
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
 public class Booking {
 
     @Id
@@ -15,7 +19,7 @@ public class Booking {
 
     @ManyToOne
     @JoinColumn(name = "service_id")
-    @JsonIgnoreProperties({"provider"})   // 🔥 prevents recursion
+    @JsonIgnoreProperties({"provider"})
     private Service service;
 
     @ManyToOne
@@ -28,33 +32,39 @@ public class Booking {
     @JsonIgnoreProperties({"providerProfile", "bookings"})
     private User provider;
 
-    private String status; // PENDING, ACCEPTED, REJECTED
+    // PENDING | ACCEPTED | REJECTED | COMPLETED | CANCELLED
+    private String status;
 
-    private String paymentStatus; // UNPAID, PAID
+    // UNPAID | PAID
+    private String paymentStatus;
+
+    @Column(name = "booking_location")
+    private String bookingLocation;
+
+    @Column(name = "booking_latitude")
+    private Double bookingLatitude;
+
+    @Column(name = "booking_longitude")
+    private Double bookingLongitude;
+
+    // ── NEW: Cancellation fields ─────────────────────────────
+    @Column(name = "cancellation_reason", columnDefinition = "TEXT")
+    private String cancellationReason;
+
+    @Column(name = "cancelled_by", length = 50)
+    private String cancelledBy;   // CUSTOMER | PROVIDER
+
+    @Column(name = "cancelled_at")
+    private LocalDateTime cancelledAt;
+    // ─────────────────────────────────────────────────────────
+
+    // ── NEW: Soft delete ─────────────────────────────────────
+    @Column(name = "is_deleted")
+    private Boolean isDeleted = false;
+
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+    // ─────────────────────────────────────────────────────────
 
     private LocalDateTime createdAt = LocalDateTime.now();
-
-    // Getters & Setters
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
-
-    public Service getService() { return service; }
-    public void setService(Service service) { this.service = service; }
-
-    public User getCustomer() { return customer; }
-    public void setCustomer(User customer) { this.customer = customer; }
-
-    public User getProvider() { return provider; }
-    public void setProvider(User provider) { this.provider = provider; }
-
-    public String getStatus() { return status; }
-    public void setStatus(String status) { this.status = status; }
-
-    public String getPaymentStatus() { return paymentStatus; }
-    public void setPaymentStatus(String paymentStatus) { this.paymentStatus = paymentStatus; }
-
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(LocalDateTime createdAt) {
-        this.createdAt = createdAt;
-    }
 }

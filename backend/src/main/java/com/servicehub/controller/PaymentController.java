@@ -1,5 +1,6 @@
 package com.servicehub.controller;
 
+import com.servicehub.dto.RazorpayVerifyRequest;
 import com.servicehub.service.PaymentService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -17,12 +18,14 @@ public class PaymentController {
         this.paymentService = paymentService;
     }
 
-    // ================= CREATE PAYMENT (Stripe PaymentIntent) =================
+    /**
+     * POST /api/payment/create-order/{bookingId}
+     * Creates a Razorpay order. Booking must be COMPLETED.
+     */
     @PostMapping("/create-order/{bookingId}")
     public ResponseEntity<?> createOrder(
             @PathVariable Long bookingId,
             Authentication authentication) {
-
         try {
             return ResponseEntity.ok(
                     paymentService.createOrder(bookingId, authentication)
@@ -33,38 +36,19 @@ public class PaymentController {
         }
     }
 
-    // ================= VERIFY PAYMENT =================
-    @PostMapping("/verify/{bookingId}")
+    /**
+     * POST /api/payment/verify
+     * Verifies Razorpay payment signature and marks booking PAID.
+     */
+    @PostMapping("/verify")
     public ResponseEntity<?> verifyPayment(
-            @PathVariable Long bookingId,
-            @RequestBody Map<String, String> body,
+            @RequestBody RazorpayVerifyRequest req,
             Authentication authentication) {
-
         try {
-            return ResponseEntity.ok(
-                    paymentService.verifyAndComplete(
-                            bookingId,
-                            body.get("paymentIntentId"),
-                            authentication
-                    )
-            );
+            paymentService.verifyAndConfirmPayment(req, authentication);
+            return ResponseEntity.ok(Map.of("message", "Payment verified and confirmed"));
         } catch (Exception e) {
             return ResponseEntity.badRequest()
-                    .body(Map.of("error", e.getMessage()));
-        }
-    }
-    @PostMapping("/create-checkout/{bookingId}")
-    public ResponseEntity<?> createCheckout(
-            @PathVariable Long bookingId,
-            Authentication authentication) {
-
-        try {
-            return ResponseEntity.ok(
-                    paymentService.createCheckoutSession(bookingId, authentication)
-            );
-        } catch (Exception e) {
-            e.printStackTrace(); // VERY IMPORTANT to see real error
-            return ResponseEntity.internalServerError()
                     .body(Map.of("error", e.getMessage()));
         }
     }

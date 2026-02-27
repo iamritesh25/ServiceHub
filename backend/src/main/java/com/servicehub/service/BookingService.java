@@ -1,85 +1,168 @@
 package com.servicehub.service;
 
+import com.servicehub.dto.CancellationRequest;
 import com.servicehub.entity.Booking;
 import com.servicehub.entity.User;
 import com.servicehub.repository.BookingRepository;
 import com.servicehub.repository.ServiceRepository;
 import com.servicehub.repository.UserRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Collectors;
 
+@Slf4j
 @Service
+@RequiredArgsConstructor
 public class BookingService {
 
     private final BookingRepository bookingRepository;
     private final UserRepository userRepository;
     private final ServiceRepository serviceRepository;
+    private final EmailService emailService;
 
-    public BookingService(BookingRepository bookingRepository,
-                          UserRepository userRepository,
-                          ServiceRepository serviceRepository) {
-        this.bookingRepository = bookingRepository;
-        this.userRepository = userRepository;
-        this.serviceRepository = serviceRepository;
-    }
-
-    // 🔵 Provider Dashboard - View Requests
+    // ── Provider: get all requests sorted newest first ────────
     public List<Booking> getProviderRequests(Authentication authentication) {
-
-        String email = authentication.getName();
-
-        User provider = userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("User not found"));
-
-        return bookingRepository.findByProvider(provider);  // ✅ FIXED
+        User provider = getUserFromAuth(authentication);
+        return bookingRepository.findByProviderOrderByCreatedAtDesc(provider);
     }
 
-    // 🔵 Provider updates booking status
-    public Booking updateStatus(Long bookingId, String status) {
+    // ── Provider: get requests with optional status filter ────
+    public List<Booking> getProviderRequestsFiltered(String status, String sortDir,
+            Authentication authentication) {
+        User provider = getUserFromAuth(authentication);
+        List<Booking> bookings = (status != null && !status.isBlank())
+                ? bookingRepository.findByProviderAndStatusOrderByNewest(provider, status.toUpperCase())
+                : bookingRepository.findByProviderOrderByCreatedAtDesc(provider);
 
+        if ("ASC".equalsIgnoreCase(sortDir)) {
+            bookings = bookings.stream()
+                    .sorted(Comparator.comparing(Booking::getCreatedAt))
+                    .collect(Collectors.toList());
+        }
+        return bookings;
+    }
+
+    // ── Customer: get all bookings sorted newest first ────────
+    public List<Booking> getCustomerBookings(Authentication authentication) {
+        User customer = getUserFromAuth(authentication);
+        return bookingRepository.findByCustomerOrderByCreatedAtDesc(customer);
+    }
+
+    // ── Update booking status ────────────────────────────────
+    public Booking updateStatus(Long bookingId, String status) {
         Booking booking = bookingRepository.findById(bookingId)
                 .orElseThrow(() -> new RuntimeException("Booking not found"));
-
         booking.setStatus(status);
+        Booking saved = bookingRepository.save(booking);
 
-        return bookingRepository.save(booking);
+        if ("ACCEPTED".equalsIgnoreCase(status)) {
+            emailService.sendCustomerBookingAcceptedNotification(saved);
+        } else if ("COMPLETED".equalsIgnoreCase(status)) {
+            emailService.sendServiceCompletedPayNow(saved);
+        }
+        return saved;
     }
 
-    // 🔵 NEW: Customer creates booking
-    public Booking createBooking(Long serviceId, Authentication authentication) {
+    // ── Create booking ────────────────────────────────────────
+    public Booking createBooking(Long serviceId,
+                                 String bookingLocation,
+                                 Double bookingLatitude,
+                                 Double bookingLongitude,
+                                 Authentication authentication) {
 
-        String email = authentication.getName();
-
-        User customer = userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("User not found"));
-
-        com.servicehub.entity.Service service =
-                serviceRepository.findById(serviceId)
-                        .orElseThrow(() -> new RuntimeException("Service not found"));
-
-        User provider = service.getProvider();
+        User customer = getUserFromAuth(authentication);
+        com.servicehub.entity.Service service = serviceRepository.findById(serviceId)
+                .orElseThrow(() -> new RuntimeException("Service not found"));
 
         Booking booking = new Booking();
         booking.setCustomer(customer);
-        booking.setProvider(provider);
+        booking.setProvider(service.getProvider());
         booking.setService(service);
         booking.setStatus("PENDING");
         booking.setPaymentStatus("UNPAID");
+        booking.setIsDeleted(false);
         booking.setCreatedAt(LocalDateTime.now());
 
-        return bookingRepository.save(booking);
+        if (bookingLocation != null && !bookingLocation.isBlank()) {
+            booking.setBookingLocation(bookingLocation);
+            booking.setBookingLatitude(bookingLatitude);
+            booking.setBookingLongitude(bookingLongitude);
+        } else {
+            booking.setBookingLocation(customer.getLocation());
+            booking.setBookingLatitude(customer.getLatitude());
+            booking.setBookingLongitude(customer.getLongitude());
+        }
+
+        Booking saved = bookingRepository.save(booking);
+        emailService.sendProviderBookingRequestNotification(saved);
+        return saved;
     }
-    
-    public List<Booking> getCustomerBookings(Authentication authentication) {
 
-        String email = authentication.getName();
+    // ── Cancel booking (customer or provider) ─────────────────
+    public Booking cancelBooking(Long bookingId, CancellationRequest req,
+            Authentication authentication) {
 
-        User customer = userRepository.findByEmail(email)
+        User user = getUserFromAuth(authentication);
+        Booking booking = bookingRepository.findById(bookingId)
+                .orElseThrow(() -> new RuntimeException("Booking not found"));
+
+        boolean isCustomer = booking.getCustomer().getEmail().equals(user.getEmail());
+        boolean isProvider = booking.getProvider().getEmail().equals(user.getEmail());
+
+        if (!isCustomer && !isProvider) {
+            throw new RuntimeException("Unauthorized: Cannot cancel this booking");
+        }
+
+        if ("COMPLETED".equals(booking.getStatus()) || "CANCELLED".equals(booking.getStatus())) {
+            throw new RuntimeException("Cannot cancel a booking that is " + booking.getStatus());
+        }
+
+        if (req.getReason() == null || req.getReason().isBlank()) {
+            throw new RuntimeException("Cancellation reason is required");
+        }
+
+        booking.setStatus("CANCELLED");
+        booking.setCancellationReason(req.getReason());
+        booking.setCancelledBy(isCustomer ? "CUSTOMER" : "PROVIDER");
+        booking.setCancelledAt(LocalDateTime.now());
+
+        Booking saved = bookingRepository.save(booking);
+        emailService.sendCancellationNotifications(saved);
+        return saved;
+    }
+
+    // ── Soft delete booking (only after COMPLETED) ────────────
+    public void deleteBooking(Long bookingId, Authentication authentication) {
+
+        User user = getUserFromAuth(authentication);
+        Booking booking = bookingRepository.findById(bookingId)
+                .orElseThrow(() -> new RuntimeException("Booking not found"));
+
+        boolean isCustomer = booking.getCustomer().getEmail().equals(user.getEmail());
+        boolean isProvider = booking.getProvider().getEmail().equals(user.getEmail());
+
+        if (!isCustomer && !isProvider) {
+            throw new RuntimeException("Unauthorized: Cannot delete this booking");
+        }
+
+        if (!"COMPLETED".equals(booking.getStatus())) {
+            throw new RuntimeException("Booking can only be deleted after it is COMPLETED");
+        }
+
+        booking.setIsDeleted(true);
+        booking.setDeletedAt(LocalDateTime.now());
+        bookingRepository.save(booking);
+    }
+
+    // ── Helper ────────────────────────────────────────────────
+    private User getUserFromAuth(Authentication authentication) {
+        return userRepository.findByEmail(authentication.getName())
                 .orElseThrow(() -> new RuntimeException("User not found"));
-
-        return bookingRepository.findByCustomer(customer);
     }
 }

@@ -1,14 +1,16 @@
-import React from "react";
-import ReactDOM from "react-dom/client";
-import App from "./App";
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { GoogleOAuthProvider } from "@react-oauth/google";
 import "./index.css";
-import { Toaster } from "react-hot-toast";
+import App from "./App.jsx";
 
-ReactDOM.createRoot(document.getElementById("root")).render(
-  <React.StrictMode>
-    <>
-      <Toaster position="top-right" />
+// Replace with your Google OAuth Client ID from https://console.cloud.google.com
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+
+createRoot(document.getElementById("root")).render(
+  <StrictMode>
+    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
       <App />
-    </>
-  </React.StrictMode>
+    </GoogleOAuthProvider>
+  </StrictMode>
 );

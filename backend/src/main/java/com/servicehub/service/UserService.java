@@ -73,6 +73,7 @@ public class UserService {
         );
 
         response.setToken(token);
+        response.setProfileImage(user.getProfileImage());
 
         return response;
     }
@@ -161,7 +162,7 @@ public class UserService {
     // ========================= CONVERT ENTITY → DTO =========================
     private UserResponseDTO convertToResponseDTO(User user) {
 
-        return new UserResponseDTO(
+        UserResponseDTO dto = new UserResponseDTO(
                 user.getId(),
                 user.getName(),
                 user.getEmail(),
@@ -169,6 +170,8 @@ public class UserService {
                 user.getRole(),
                 user.getCreatedAt()
         );
+        dto.setProfileImage(user.getProfileImage());
+        return dto;
     }
     public User getUserEntityByEmail(String email) {
         return userRepository.findByEmail(email)

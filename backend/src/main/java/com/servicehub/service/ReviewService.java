@@ -42,8 +42,8 @@ public class ReviewService {
         Booking booking = bookingRepository.findById(dto.getBookingId())
                 .orElseThrow(() -> new ResourceNotFoundException("Booking not found"));
 
-        if (!booking.getStatus().equals("ACCEPTED")) {
-            throw new BadRequestException("Cannot review unaccepted booking");
+        if (!booking.getStatus().equals("COMPLETED")) {
+            throw new BadRequestException("You can only review completed bookings");
         }
 
         if (reviewRepository.existsByBookingId(dto.getBookingId())) {

@@ -79,4 +79,16 @@ public class ProviderController {
         List<ProviderProfileDTO> response = providerService.getAllProviders();
         return new ResponseEntity<>(response, HttpStatus.OK);
     }
+    // ✅ Get logged-in provider profile
+    @GetMapping("/profile")
+    public ResponseEntity<ProviderProfileDTO> getMyProfile(
+            org.springframework.security.core.Authentication authentication) {
+
+        String email = authentication.getName();
+
+        ProviderProfileDTO profile =
+                providerService.getProviderProfileByEmail(email);
+
+        return ResponseEntity.ok(profile);
+    }
 }

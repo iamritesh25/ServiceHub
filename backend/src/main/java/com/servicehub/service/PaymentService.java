@@ -1,42 +1,55 @@
 package com.servicehub.service;
 
+import com.razorpay.Order;
+import com.razorpay.RazorpayClient;
+import com.razorpay.RazorpayException;
+import com.servicehub.dto.RazorpayVerifyRequest;
 import com.servicehub.entity.Booking;
+import com.servicehub.entity.PaymentTransaction;
 import com.servicehub.repository.BookingRepository;
+import com.servicehub.repository.PaymentTransactionRepository;
 import com.servicehub.repository.UserRepository;
-import com.stripe.Stripe;
-import com.stripe.model.PaymentIntent;
-import com.stripe.param.PaymentIntentCreateParams;
+import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
-import com.stripe.Stripe;
-import com.stripe.model.checkout.Session;
-import com.stripe.param.checkout.SessionCreateParams;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.util.HexFormat;
 import java.util.Map;
 
 @Service
 public class PaymentService {
 
-    @Value("${stripe.secret.key}")
-    private String stripeSecretKey;
+    @Value("${razorpay.key.id}")
+    private String razorpayKeyId;
+
+    @Value("${razorpay.key.secret}")
+    private String razorpayKeySecret;
 
     private final BookingRepository bookingRepository;
     private final UserRepository userRepository;
     private final EmailService emailService;
+    private final PaymentTransactionRepository transactionRepository;
 
     public PaymentService(BookingRepository bookingRepository,
                           UserRepository userRepository,
-                          EmailService emailService) {
+                          EmailService emailService,
+                          PaymentTransactionRepository transactionRepository) {
         this.bookingRepository = bookingRepository;
         this.userRepository = userRepository;
         this.emailService = emailService;
+        this.transactionRepository = transactionRepository;
     }
 
-    // STEP 1: Create PaymentIntent
+    /**
+     * STEP 1: Create Razorpay Order — only allowed when booking is COMPLETED.
+     */
     public Map<String, Object> createOrder(Long bookingId, Authentication authentication)
-            throws Exception {
-
-        Stripe.apiKey = stripeSecretKey;
+            throws RazorpayException {
 
         String email = authentication.getName();
 
@@ -51,116 +64,89 @@ public class PaymentService {
             throw new RuntimeException("Already paid");
         }
 
-        if (!"ACCEPTED".equals(booking.getStatus())) {
-            throw new RuntimeException("Booking must be ACCEPTED before payment");
+        if (!"COMPLETED".equals(booking.getStatus())) {
+            throw new RuntimeException("Payment is only allowed after service is COMPLETED");
         }
 
         long amountInPaise = (long) (booking.getService().getPrice() * 100);
 
-        PaymentIntentCreateParams params =
-                PaymentIntentCreateParams.builder()
-                        .setAmount(amountInPaise)
-                        .setCurrency("inr")
-                        .setAutomaticPaymentMethods(
-                                PaymentIntentCreateParams.AutomaticPaymentMethods.builder()
-                                        .setEnabled(true)
-                                        .build()
-                        )
-                        .putMetadata("bookingId", bookingId.toString())
-                        .build();
+        RazorpayClient client = new RazorpayClient(razorpayKeyId, razorpayKeySecret);
 
-        PaymentIntent intent = PaymentIntent.create(params);
+        JSONObject orderRequest = new JSONObject();
+        orderRequest.put("amount", amountInPaise);
+        orderRequest.put("currency", "INR");
+        orderRequest.put("receipt", "booking_" + bookingId);
+        orderRequest.put("payment_capture", 1);
+
+        Order order = client.orders.create(orderRequest);
+
+        // Persist transaction record
+        PaymentTransaction txn = new PaymentTransaction();
+        txn.setBooking(booking);
+        txn.setRazorpayOrderId(order.get("id"));
+        txn.setAmount(BigDecimal.valueOf(booking.getService().getPrice()));
+        txn.setCurrency("INR");
+        txn.setStatus("CREATED");
+        transactionRepository.save(txn);
 
         return Map.of(
-                "clientSecret", intent.getClientSecret(),
-                "bookingId", bookingId,
-                "amount", amountInPaise
+            "orderId",    order.get("id"),
+            "amount",     amountInPaise,
+            "currency",   "INR",
+            "keyId",      razorpayKeyId,
+            "bookingId",  bookingId,
+            "serviceName", booking.getService().getName()
         );
     }
 
-    // STEP 2: Verify Payment
-    public Map<String, String> verifyAndComplete(
-            Long bookingId,
-            String paymentIntentId,
-            Authentication authentication) throws Exception {
-
-        Stripe.apiKey = stripeSecretKey;
+    /**
+     * STEP 2: Verify Razorpay payment signature (backend-side verification).
+     */
+    public void verifyAndConfirmPayment(RazorpayVerifyRequest req, Authentication authentication)
+            throws Exception {
 
         String email = authentication.getName();
 
-        Booking booking = bookingRepository.findById(bookingId)
+        Booking booking = bookingRepository.findById(req.getBookingId())
                 .orElseThrow(() -> new RuntimeException("Booking not found"));
 
         if (!booking.getCustomer().getEmail().equals(email)) {
             throw new RuntimeException("Unauthorized");
         }
 
-        PaymentIntent intent = PaymentIntent.retrieve(paymentIntentId);
+        // HMAC-SHA256 signature verification
+        String payload = req.getRazorpayOrderId() + "|" + req.getRazorpayPaymentId();
+        String generatedSignature = hmacSha256(payload, razorpayKeySecret);
 
-        if (!"succeeded".equals(intent.getStatus())) {
-            throw new RuntimeException("Payment not successful");
+        if (!generatedSignature.equals(req.getRazorpaySignature())) {
+            throw new RuntimeException("Payment signature verification failed");
         }
 
+        // Update booking payment status
         booking.setPaymentStatus("PAID");
         bookingRepository.save(booking);
 
+        // Update transaction record
+        transactionRepository.findByRazorpayOrderId(req.getRazorpayOrderId())
+            .ifPresent(txn -> {
+                txn.setRazorpayPaymentId(req.getRazorpayPaymentId());
+                txn.setRazorpaySignature(req.getRazorpaySignature());
+                txn.setStatus("PAID");
+                transactionRepository.save(txn);
+            });
+
+        // Send email notifications
         emailService.sendCustomerPaymentConfirmation(booking);
         emailService.sendProviderPaymentNotification(booking);
-
-        return Map.of(
-                "status", "PAID",
-                "message", "Payment successful! Emails sent."
-        );
     }
 
-    public Map<String, String> createCheckoutSession(Long bookingId, Authentication authentication) throws Exception {
-
-        Stripe.apiKey = stripeSecretKey;
-
-        String email = authentication.getName();
-
-        Booking booking = bookingRepository.findById(bookingId)
-                .orElseThrow(() -> new RuntimeException("Booking not found"));
-
-        if (!booking.getCustomer().getEmail().equals(email)) {
-            throw new RuntimeException("Unauthorized");
-        }
-
-        if ("PAID".equals(booking.getPaymentStatus())) {
-            throw new RuntimeException("Already paid");
-        }
-
-        if (!"ACCEPTED".equals(booking.getStatus())) {
-            throw new RuntimeException("Booking must be ACCEPTED");
-        }
-
-        long amount = (long) (booking.getService().getPrice() * 100);
-
-        SessionCreateParams params =
-                SessionCreateParams.builder()
-                        .setMode(SessionCreateParams.Mode.PAYMENT)
-                        .setSuccessUrl("http://localhost:5173/payment-success?bookingId=" + bookingId)
-                        .setCancelUrl("http://localhost:5173/payment-cancel")
-                        .addLineItem(
-                                SessionCreateParams.LineItem.builder()
-                                        .setQuantity(1L)
-                                        .setPriceData(
-                                                SessionCreateParams.LineItem.PriceData.builder()
-                                                        .setCurrency("inr")
-                                                        .setUnitAmount(amount)
-                                                        .setProductData(
-                                                                SessionCreateParams.LineItem.PriceData.ProductData.builder()
-                                                                        .setName(booking.getService().getName())
-                                                                        .build()
-                                                        )
-                                                        .build()
-                                        )
-                                        .build()
-                        )
-                        .build();
-
-        Session session = Session.create(params);
-
-        return Map.of("checkoutUrl", session.getUrl());
+    // ── HMAC-SHA256 helper ──────────────────────────────────────
+    private String hmacSha256(String data, String secret) throws Exception {
+        Mac mac = Mac.getInstance("HmacSHA256");
+        SecretKeySpec secretKeySpec = new SecretKeySpec(
+                secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+        mac.init(secretKeySpec);
+        byte[] hash = mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
+        return HexFormat.of().formatHex(hash);
     }
 }

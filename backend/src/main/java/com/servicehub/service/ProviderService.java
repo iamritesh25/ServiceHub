@@ -193,4 +193,13 @@ public class ProviderService {
 
         return convertToDTO(saved);
     }
+    public ProviderProfileDTO getProviderProfileByEmail(String email) {
+
+        ProviderProfile profile = providerProfileRepository
+                .findByUser_Email(email)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Provider profile not found for email: " + email));
+
+        return convertToDTO(profile);
+    }
 }

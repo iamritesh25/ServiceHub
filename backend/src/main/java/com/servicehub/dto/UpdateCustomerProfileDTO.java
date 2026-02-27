@@ -1,20 +1,12 @@
 package com.servicehub.dto;
 
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+@Data
+@NoArgsConstructor
 public class UpdateCustomerProfileDTO {
-
     private String name;
-    private String phone;      // ✅ changed
+    private String phone;
     private String location;
-
-    public String getName() {
-        return name;
-    }
-
-    public String getPhone() {     // ✅ changed
-        return phone;
-    }
-
-    public String getLocation() {
-        return location;
-    }
 }

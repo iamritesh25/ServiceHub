@@ -29,16 +29,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         String path = request.getServletPath();
 
-        // 🔥 VERY IMPORTANT — Skip JWT filter for login & register
-        if (path.startsWith("/api/auth/")) {
+        // Skip JWT filter ONLY for truly public auth endpoints (login, register, google oauth)
+        // Do NOT skip for /api/auth/profile-image — it requires an authenticated user
+        if (path.equals("/api/auth/login") ||
+                path.equals("/api/auth/register") ||
+                path.equals("/api/auth/google")) {
             filterChain.doFilter(request, response);
             return;
         }
 
         if (path.startsWith("/v3/api-docs") ||
-            path.startsWith("/swagger-ui") ||
-            path.startsWith("/swagger-ui.html")) {
-
+                path.startsWith("/swagger-ui") ||
+                path.startsWith("/swagger-ui.html")) {
             filterChain.doFilter(request, response);
             return;
         }

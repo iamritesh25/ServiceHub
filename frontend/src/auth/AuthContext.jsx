@@ -43,8 +43,15 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
   };
 
+  // updateUser: called after OAuth login or any action that changes user data
+  // Keeps React state, localStorage, and UI all in sync
+  const updateUser = (userData) => {
+    localStorage.setItem("user", JSON.stringify(userData));
+    setUser(userData);
+  };
+
   return (
-    <AuthContext.Provider value={{ user, login, register, logout }}>
+    <AuthContext.Provider value={{ user, login, register, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

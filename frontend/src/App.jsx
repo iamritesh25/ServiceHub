@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, useLocation } from "react-router-dom";
 import { useEffect } from "react";
+import { Toaster } from "react-hot-toast";
 
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
@@ -25,6 +26,37 @@ function App() {
     <AuthProvider>
       <Router>
         <ScrollToTop />
+
+        {/* Global toast container — must be here so it is always mounted */}
+        <Toaster
+          position="top-right"
+          toastOptions={{
+            duration: 3500,
+            style: {
+              borderRadius: "10px",
+              background: "#1e293b",
+              color: "#f8fafc",
+              fontSize: "14px",
+              fontWeight: 500,
+              padding: "12px 18px",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+            },
+            success: {
+              iconTheme: { primary: "#22c55e", secondary: "#fff" },
+              style: {
+                background: "#0f172a",
+                border: "1px solid #22c55e33",
+              },
+            },
+            error: {
+              iconTheme: { primary: "#ef4444", secondary: "#fff" },
+              style: {
+                background: "#0f172a",
+                border: "1px solid #ef444433",
+              },
+            },
+          }}
+        />
 
         <Routes>
           <Route path="/" element={<Landing />} />

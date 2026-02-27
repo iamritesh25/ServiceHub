@@ -1,118 +1,217 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import API from "../api/axios";
+import toast from "react-hot-toast";
 import "../App.css";
 import ReviewModal from "../components/ReviewModal";
 import MapView from "../components/MapView";
-import StripeCheckout from "../components/StripeCheckout";
+import RazorpayCheckout from "../components/RazorpayCheckout";
+import CancellationModal from "../components/CancellationModal";
+import ProfileImageUpload from "../components/ProfileImageUpload";
+import { ViewModeToggle, ViewContainer } from "../components/ViewModeToggle";
 import useGeolocation from "../hooks/useGeolocation";
+import { getServiceImage } from "../utils/serviceImages";
+
+const statusColor = (s) =>
+  s === "ACCEPTED"  ? "badge-green"  :
+  s === "REJECTED"  ? "badge-red"    :
+  s === "COMPLETED" ? "badge-blue"   :
+  s === "CANCELLED" ? "badge-gray"   : "badge-yellow";
+
+// ── Booking Confirmation Modal ─────────────────────────────────────────────
+const BookingConfirmModal = ({ booking, onClose }) => {
+  if (!booking) return null;
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      zIndex: 9999, padding: 20,
+    }}>
+      <div style={{
+        background: "white", borderRadius: 18, padding: 40,
+        width: "100%", maxWidth: 460,
+        boxShadow: "0 24px 64px rgba(0,0,0,0.3)",
+        textAlign: "center",
+      }}>
+        <div style={{ fontSize: 56, marginBottom: 12 }}>🎉</div>
+        <h2 style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", marginBottom: 6 }}>
+          Booking Confirmed!
+        </h2>
+        <p style={{ fontSize: 14, color: "#64748b", marginBottom: 24 }}>
+          Your booking request has been sent to the provider.
+        </p>
+        <div style={{
+          background: "#f8fafc", borderRadius: 12, padding: 20,
+          border: "1px solid #e2e8f0", textAlign: "left", marginBottom: 24,
+        }}>
+          {[
+            ["Service", booking.service?.name],
+            ["Provider", booking.provider?.name],
+            ["Price", `₹ ${booking.service?.price}`],
+            booking.bookingLocation ? ["Location", booking.bookingLocation] : null,
+            ["Booking ID", `#${booking.id}`],
+          ].filter(Boolean).map(([label, value], i, arr) => (
+            <div key={label} style={{
+              display: "flex", justifyContent: "space-between",
+              padding: "8px 0",
+              borderBottom: i < arr.length - 1 ? "1px solid #e2e8f0" : "none",
+            }}>
+              <span style={{ color: "#64748b", fontSize: 14, fontWeight: 600 }}>{label}</span>
+              <span style={{ color: "#0f172a", fontSize: 14, fontWeight: 700, maxWidth: 240, textAlign: "right" }}>{value}</span>
+            </div>
+          ))}
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderTop: "1px solid #e2e8f0" }}>
+            <span style={{ color: "#64748b", fontSize: 14, fontWeight: 600 }}>Status</span>
+            <span style={{ background: "#fef9c3", color: "#92400e", fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 99 }}>PENDING</span>
+          </div>
+        </div>
+        <p style={{ fontSize: 13, color: "#94a3b8", marginBottom: 24 }}>
+          You will be notified by email once the provider accepts your booking.
+        </p>
+        <button
+          onClick={onClose}
+          style={{
+            width: "100%", padding: "13px",
+            background: "linear-gradient(90deg, #2563eb, #3b82f6)",
+            color: "white", border: "none", borderRadius: 10,
+            fontWeight: 700, fontSize: 15, cursor: "pointer",
+          }}
+        >
+          View My Bookings →
+        </button>
+      </div>
+    </div>
+  );
+};
+// ──────────────────────────────────────────────────────────────────────────────
 
 const CustomerDashboard = () => {
-
   const navigate = useNavigate();
-  const token = localStorage.getItem("token");
-  const [selectedBooking, setSelectedBooking] = useState(null);
   const [activeTab, setActiveTab] = useState("explore");
   const [keyword, setKeyword] = useState("");
   const [services, setServices] = useState([]);
   const [bookings, setBookings] = useState([]);
   const [loadingSearch, setLoadingSearch] = useState(false);
+  const [selectedBooking, setSelectedBooking] = useState(null);
+  const [cancelBooking, setCancelBooking] = useState(null);
+  const [confirmedBooking, setConfirmedBooking] = useState(null);
 
-  // ================= MAP STATE =================
+  // View modes
+  const [servicesView, setServicesView] = useState("grid");
+  const [bookingsView, setBookingsView] = useState("grid");
+
+  // Booking filters
+  const [filterService, setFilterService] = useState("");
+  const [filterProvider, setFilterProvider] = useState("");
+  const [filterPriceMin, setFilterPriceMin] = useState("");
+  const [filterPriceMax, setFilterPriceMax] = useState("");
+
+  // Map state
   const [activeMapServiceId, setActiveMapServiceId] = useState(null);
   const [myLocation, setMyLocation] = useState(null);
   const [mapError, setMapError] = useState(null);
   const { getLocation, loading: geoLoading } = useGeolocation();
-
-  // ================= MANUAL LOCATION STATE =================
-  const [locationMode, setLocationMode] = useState("auto"); // "auto" | "manual"
+  const [locationMode, setLocationMode] = useState("auto");
   const [manualAddress, setManualAddress] = useState("");
   const [geocoding, setGeocoding] = useState(false);
-  const [geocodeError, setGeocodeError] = useState(null);
 
-  // ================= SHARE LOCATION STATE =================
-  const [locationShared, setLocationShared] = useState(false);
-  const [sharingLocation, setSharingLocation] = useState(false);
+  // Booking location
+  const [bookingLocMode, setBookingLocMode] = useState("manual");
+  const [bookingManualAddress, setBookingManualAddress] = useState("");
+  const [bookingGpsLoading, setBookingGpsLoading] = useState(false);
 
-  const [profile, setProfile] = useState({
-    name: "",
-    email: "",
-    phone: "",
-    location: ""
-  });
+  const [profile, setProfile] = useState({ name: "", email: "", phone: "", location: "" });
+  const [profileImage, setProfileImage] = useState(
+    JSON.parse(localStorage.getItem("user") || "{}").profileImage || null
+  );
 
-  // ================= SEARCH =================
+  const storedUser = JSON.parse(localStorage.getItem("user") || "{}");
+
+  const geocodeAddress = async (address) => {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`,
+      { headers: { "Accept-Language": "en" } }
+    );
+    const data = await res.json();
+    if (!data.length) throw new Error("Address not found. Try a more specific address.");
+    return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+  };
+
   const searchServices = async () => {
+    if (!keyword.trim()) { setServices([]); return; }
+    setLoadingSearch(true);
     try {
-      setLoadingSearch(true);
       const res = await API.get(`/api/services/search?keyword=${keyword}`);
       setServices(res.data);
-    } catch (err) {
-      console.error("Search failed", err);
-    } finally {
-      setLoadingSearch(false);
-    }
+    } catch { toast.error("Search failed"); }
+    finally { setLoadingSearch(false); }
   };
 
-  // ================= BOOK =================
-  const bookService = async (id) => {
+  useEffect(() => {
+    const t = setTimeout(searchServices, 500);
+    return () => clearTimeout(t);
+  }, [keyword]);
+
+  const bookService = async (serviceId) => {
+    let payload = {};
     try {
-      await API.post(`/api/bookings/${id}`);
-      alert("Booking request sent ✅");
+      if (bookingLocMode === "gps") {
+        setBookingGpsLoading(true);
+        const loc = await getLocation();
+        let label = `${loc.lat.toFixed(4)}, ${loc.lng.toFixed(4)}`;
+        try {
+          const r = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${loc.lat}&lon=${loc.lng}&format=json`, { headers: { "Accept-Language": "en" } });
+          const d = await r.json(); if (d.display_name) label = d.display_name;
+        } catch (_) {}
+        payload = { bookingLocation: label, bookingLatitude: loc.lat, bookingLongitude: loc.lng };
+        setBookingGpsLoading(false);
+      } else if (bookingLocMode === "manual") {
+        if (!bookingManualAddress.trim()) { toast.error("Please enter an address first."); return; }
+        const coords = await geocodeAddress(bookingManualAddress);
+        payload = { bookingLocation: bookingManualAddress, bookingLatitude: coords.lat, bookingLongitude: coords.lng };
+      }
+      const res = await API.post(`/api/bookings/${serviceId}`, payload);
+      setConfirmedBooking(res.data);
+      toast.success("Booking request sent! Provider will be notified.");
     } catch (err) {
-      console.error("Booking failed", err);
-      alert("Booking failed ❌");
+      setBookingGpsLoading(false);
+      toast.error(err.message || "Booking failed");
     }
   };
 
-  // ================= BOOKINGS =================
+  const handleConfirmClose = () => {
+    setConfirmedBooking(null);
+    setActiveTab("bookings");
+    fetchBookings();
+  };
+
+  const deleteBooking = async (id) => {
+    if (!confirm("Delete this booking? This cannot be undone.")) return;
+    try {
+      await API.delete(`/api/bookings/${id}`);
+      toast.success("Booking deleted");
+      fetchBookings();
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Cannot delete — booking must be COMPLETED");
+    }
+  };
+
   const fetchBookings = async () => {
-    try {
-      const res = await API.get("/api/bookings/customer");
-      setBookings(res.data);
-    } catch (err) {
-      console.error("Failed to fetch bookings", err);
-    }
+    try { const res = await API.get("/api/bookings/customer"); setBookings(res.data); }
+    catch { toast.error("Failed to load bookings"); }
   };
 
-  // ================= PROFILE =================
   const fetchProfile = async () => {
-    try {
-      const res = await API.get("/api/customer/profile");
-      setProfile(res.data);
-    } catch (err) {
-      console.error("Failed to fetch profile", err);
-    }
+    try { const res = await API.get("/api/customer/profile"); setProfile(res.data); }
+    catch { toast.error("Failed to load profile"); }
   };
 
   const updateProfile = async (e) => {
     e.preventDefault();
     try {
-      await API.put("/api/customer/profile", {
-        name: profile.name,
-        phone: profile.phone,
-        location: profile.location
-      });
-      alert("Profile Updated ✅");
-    } catch (err) {
-      console.error("Profile update failed", err);
-      alert("Profile update failed ❌");
-    }
-  };
-
-  // ================= SHARE MY LOCATION =================
-  const shareMyLocation = async () => {
-    setSharingLocation(true);
-    try {
-      const loc = await getLocation();
-      setMyLocation(loc);
-      setLocationShared(true);
-      alert("✅ Location saved! Providers can now see the route to you.");
-    } catch (err) {
-      alert("❌ Location access denied. Please allow location in your browser and try again.");
-    } finally {
-      setSharingLocation(false);
-    }
+      await API.put("/api/customer/profile", { name: profile.name, phone: profile.phone, location: profile.location });
+      toast.success("Profile updated ✅");
+    } catch { toast.error("Update failed"); }
   };
 
   useEffect(() => {
@@ -120,449 +219,270 @@ const CustomerDashboard = () => {
     if (activeTab === "profile") fetchProfile();
   }, [activeTab]);
 
-  // ================= LIVE SEARCH (DEBOUNCE) =================
-  useEffect(() => {
-    const delayDebounce = setTimeout(() => {
-      if (keyword.trim() !== "") {
-        searchServices();
-      } else {
-        setServices([]);
-      }
-    }, 500);
-    return () => clearTimeout(delayDebounce);
-  }, [keyword]);
+  // ── Filtered bookings ──────────────────────────────────────
+  const filteredBookings = useMemo(() => {
+    return bookings.filter((b) => {
+      if (filterService && !b.service?.name?.toLowerCase().includes(filterService.toLowerCase())) return false;
+      if (filterProvider && !b.provider?.name?.toLowerCase().includes(filterProvider.toLowerCase())) return false;
+      if (filterPriceMin && b.service?.price < parseFloat(filterPriceMin)) return false;
+      if (filterPriceMax && b.service?.price > parseFloat(filterPriceMax)) return false;
+      return true;
+    });
+  }, [bookings, filterService, filterProvider, filterPriceMin, filterPriceMax]);
 
-  // ================= GEOCODE ADDRESS → LAT/LNG =================
-  const geocodeAddress = async (address) => {
-    const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-    if (!apiKey || apiKey === "YOUR_GOOGLE_MAPS_API_KEY_HERE") {
-      // Fallback: use OpenStreetMap Nominatim (free, no key)
-      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`;
-      const res = await fetch(url, { headers: { "Accept-Language": "en" } });
-      const data = await res.json();
-      if (data.length === 0) throw new Error("Address not found. Try a more specific address.");
-      return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
-    }
-
-    // Use Google Geocoding API if key is set
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${apiKey}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    if (data.status !== "OK" || data.results.length === 0) {
-      throw new Error("Address not found. Try a more specific address.");
-    }
-    const { lat, lng } = data.results[0].geometry.location;
-    return { lat, lng };
-  };
-
-  // ================= LOCATE PROVIDER =================
   const handleLocate = async (service) => {
     setMapError(null);
-    setGeocodeError(null);
-
-    // Toggle off if same service clicked again
-    if (activeMapServiceId === service.id) {
-      setActiveMapServiceId(null);
-      setMyLocation(null);
-      return;
-    }
-
-    // Check provider has saved coordinates
-    const providerLat = service.provider?.providerProfile?.latitude;
-    const providerLng = service.provider?.providerProfile?.longitude;
-
-    if (!providerLat || !providerLng) {
+    if (activeMapServiceId === service.id) { setActiveMapServiceId(null); setMyLocation(null); return; }
+    const pLat = service.provider?.providerProfile?.latitude;
+    const pLng = service.provider?.providerProfile?.longitude;
+    if (!pLat || !pLng) {
       setMapError(`Provider "${service.provider?.name}" has not shared their location yet.`);
-      setActiveMapServiceId(service.id);
-      return;
+      setActiveMapServiceId(service.id); return;
     }
-
     try {
       let loc;
       if (locationMode === "manual") {
-        if (!manualAddress.trim()) {
-          setGeocodeError("Please enter your address first.");
-          setActiveMapServiceId(service.id);
-          return;
-        }
-        setGeocoding(true);
-        loc = await geocodeAddress(manualAddress);
-        setGeocoding(false);
-      } else {
-        loc = await getLocation();
-      }
-      setMyLocation(loc);
-      setActiveMapServiceId(service.id);
-    } catch (err) {
-      setGeocoding(false);
-      setMapError(err.message);
-      setActiveMapServiceId(service.id);
-    }
+        if (!manualAddress.trim()) { toast.error("Enter address first."); setActiveMapServiceId(service.id); return; }
+        setGeocoding(true); loc = await geocodeAddress(manualAddress); setGeocoding(false);
+      } else { loc = await getLocation(); }
+      setMyLocation(loc); setActiveMapServiceId(service.id);
+    } catch (err) { setGeocoding(false); setMapError(err.message); setActiveMapServiceId(service.id); }
   };
 
-  const handleLogout = () => {
-    localStorage.clear();
-    navigate("/");
-  };
+  const NavButton = ({ tab, label }) => (
+    <button className={activeTab === tab ? "active" : ""} onClick={() => setActiveTab(tab)}>
+      {label}
+    </button>
+  );
 
   const renderContent = () => {
-
     switch (activeTab) {
 
-      case "explore":
-        return (
-          <div className="dashboard-section">
+      case "explore": return (
+        <div className="dashboard-section">
+          <div className="section-header">
             <h2>Explore Services</h2>
+            <ViewModeToggle mode={servicesView} onChange={setServicesView} available={["grid", "list", "card", "compact"]} />
+          </div>
 
-            <div className="dashboard-form">
-              <input
-                type="text"
-                placeholder="Search services..."
-                value={keyword}
-                onChange={(e) => setKeyword(e.target.value)}
-              />
-              <button onClick={searchServices} className="dashboard-btn">
-                Search
-              </button>
-            </div>
+          <div className="dashboard-form" style={{ maxWidth: 560, flexDirection: "row", gap: 10, marginBottom: 24 }}>
+            <input
+              type="text" placeholder="Search services (e.g. Plumbing, AC Repair...)"
+              value={keyword} onChange={(e) => setKeyword(e.target.value)} style={{ flex: 1 }}
+            />
+            <button className="dashboard-btn" onClick={searchServices}>Search</button>
+          </div>
 
-            {loadingSearch && <p style={{ marginTop: "20px" }}>Searching...</p>}
-
-            {!loadingSearch && services.length === 0 && keyword !== "" && (
-              <p style={{ marginTop: "20px", color: "#64748b" }}>No services found</p>
-            )}
-
-            {/* ── LOCATION MODE TOGGLE ── */}
-            {services.length > 0 && (
-              <div style={{
-                margin: "20px 0",
-                padding: "14px 18px",
-                background: "#f8fafc",
-                borderRadius: "10px",
-                border: "1px solid #e2e8f0",
-              }}>
-                <p style={{ margin: "0 0 10px 0", fontWeight: "600", color: "#1e293b", fontSize: "14px" }}>
-                  📍 Your location for route calculation:
-                </p>
-                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                  <button
-                    onClick={() => { setLocationMode("auto"); setGeocodeError(null); }}
-                    style={{
-                      padding: "7px 16px",
-                      background: locationMode === "auto" ? "#2563eb" : "#e2e8f0",
-                      color: locationMode === "auto" ? "white" : "#374151",
-                      border: "none",
-                      borderRadius: "6px",
-                      cursor: "pointer",
-                      fontWeight: "600",
-                      fontSize: "13px",
-                    }}
-                  >
-                    📡 Use Current Location
-                  </button>
-                  <button
-                    onClick={() => { setLocationMode("manual"); setGeocodeError(null); }}
-                    style={{
-                      padding: "7px 16px",
-                      background: locationMode === "manual" ? "#2563eb" : "#e2e8f0",
-                      color: locationMode === "manual" ? "white" : "#374151",
-                      border: "none",
-                      borderRadius: "6px",
-                      cursor: "pointer",
-                      fontWeight: "600",
-                      fontSize: "13px",
-                    }}
-                  >
-                    ✏️ Enter Location Manually
-                  </button>
+          {services.length > 0 && (
+            <>
+              <div className="location-panel" style={{ marginBottom: 16 }}>
+                <div className="location-panel-title">Booking Location</div>
+                <div className="location-btns">
+                  {[["gps","Current GPS"], ["manual","Enter Address"]].map(([mode, label]) => (
+                    <button key={mode} className={`loc-btn${bookingLocMode === mode ? " active" : ""}`}
+                      onClick={() => setBookingLocMode(mode)}>{label}</button>
+                  ))}
                 </div>
-
-                {locationMode === "manual" && (
-                  <div style={{ marginTop: "12px", display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                    <input
-                      type="text"
-                      placeholder="Enter your address (e.g. Koregaon Park, Pune)"
-                      value={manualAddress}
-                      onChange={(e) => setManualAddress(e.target.value)}
-                      style={{
-                        flex: 1,
-                        padding: "8px 12px",
-                        borderRadius: "6px",
-                        border: "1px solid #cbd5e1",
-                        fontSize: "14px",
-                        minWidth: "200px",
-                      }}
-                    />
-                    {geocodeError && (
-                      <p style={{ color: "#dc2626", fontSize: "13px", margin: "4px 0 0 0", width: "100%" }}>
-                        ⚠️ {geocodeError}
-                      </p>
-                    )}
-                  </div>
+                {bookingLocMode === "manual" && (
+                  <input type="text" placeholder="Enter address..."
+                    value={bookingManualAddress} onChange={(e) => setBookingManualAddress(e.target.value)}
+                    style={{ marginTop: 10, width: "100%", padding: "9px 14px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 14, fontFamily: "inherit" }}
+                  />
                 )}
               </div>
-            )}
+              <div className="location-panel" style={{ marginBottom: 24 }}>
+                <div className="location-panel-title">Map Location</div>
+                <div className="location-btns">
+                  <button className={`loc-btn${locationMode === "auto" ? " active" : ""}`} onClick={() => setLocationMode("auto")}>GPS</button>
+                  <button className={`loc-btn${locationMode === "manual" ? " active" : ""}`} onClick={() => setLocationMode("manual")}>Manual</button>
+                </div>
+                {locationMode === "manual" && (
+                  <input type="text" placeholder="Enter your address"
+                    value={manualAddress} onChange={(e) => setManualAddress(e.target.value)}
+                    style={{ marginTop: 10, width: "100%", padding: "9px 14px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 14, fontFamily: "inherit" }}
+                  />
+                )}
+              </div>
+            </>
+          )}
 
-            <div className="services-grid">
-              {services.map((s) => (
-                <div key={s.id} className="card">
+          {loadingSearch && <div style={{ textAlign: "center", padding: 32 }}><div className="spinner"/></div>}
+
+          <ViewContainer mode={servicesView}>
+            {services.map((s) => (
+              <div key={s.id} className="card" style={servicesView === "list" ? { display: "flex", gap: 16, alignItems: "flex-start" } : {}}>
+                {servicesView !== "compact" && (
+                  <img
+                    src={getServiceImage(s.name)}
+                    alt={s.name}
+                    style={{ width: servicesView === "list" ? 100 : "100%", height: servicesView === "list" ? 80 : 160, objectFit: "cover", borderRadius: 8, marginBottom: 12 }}
+                  />
+                )}
+                <div style={{ flex: 1 }}>
                   <h3>{s.name}</h3>
-
-                  <p><strong>Description:</strong> {s.description}</p>
-                  <p><strong>Price:</strong> ₹ {s.price}</p>
-
-                  <hr />
-
-                  <p><strong>Provider:</strong> {s.provider?.name || "Not Available"}</p>
-                  <p><strong>Phone:</strong> {s.provider?.phone || "Not Available"}</p>
-                  <p>
-                    <strong>Location:</strong>{" "}
-                    {s.provider?.providerProfile?.location || "Not Updated"}
-                  </p>
-                  <p>
-                    <strong>Rating:</strong>{" "}
-                    ⭐ {s.provider?.providerProfile?.rating ?? 0}
-                  </p>
-
-                  <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginTop: "10px" }}>
-                    <button
-                      className="dashboard-btn"
-                      onClick={() => bookService(s.id)}
-                    >
-                      Book Now
+                  {servicesView !== "compact" && <p style={{ color: "var(--text-secondary)", marginBottom: 4 }}>{s.description}</p>}
+                  <p style={{ fontSize: 18, fontWeight: 700, color: "#1e293b" }}>₹ {s.price}</p>
+                  {servicesView !== "compact" && (
+                    <>
+                      <hr />
+                      <p><strong>Provider:</strong> {s.provider?.name}</p>
+                      <p><strong>Location:</strong> {s.provider?.providerProfile?.location || "—"}</p>
+                      <p><strong>Rating:</strong> ⭐ {s.provider?.providerProfile?.rating ?? 0}</p>
+                    </>
+                  )}
+                  <div className="card-actions">
+                    <button className="dashboard-btn" onClick={() => bookService(s.id)} disabled={bookingGpsLoading}>
+                      {bookingGpsLoading ? "Getting GPS..." : "Book Now"}
                     </button>
-
-                    <button
-                      className="dashboard-btn"
-                      onClick={() => handleLocate(s)}
-                      style={{ background: activeMapServiceId === s.id ? "#16a34a" : "#0f766e" }}
-                      disabled={(geoLoading || geocoding) && activeMapServiceId === s.id}
-                    >
-                      {(geoLoading || geocoding) && activeMapServiceId === s.id
-                        ? "Locating..."
-                        : activeMapServiceId === s.id
-                        ? "Hide Map"
-                        : "📍 Locate"}
+                    <button onClick={() => handleLocate(s)} disabled={(geoLoading || geocoding) && activeMapServiceId === s.id}
+                      style={{ padding: "8px 16px", background: activeMapServiceId === s.id ? "#16a34a" : "#0f766e", color: "white", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
+                      {(geoLoading || geocoding) && activeMapServiceId === s.id ? "Locating..." : activeMapServiceId === s.id ? "Hide Map" : "Locate"}
                     </button>
                   </div>
-
-                  {/* Map error for this card */}
-                  {activeMapServiceId === s.id && mapError && (
-                    <div style={{ marginTop: "12px", color: "#dc2626", fontSize: "14px" }}>
-                      ⚠️ {mapError}
-                    </div>
-                  )}
-
-                  {/* Embedded Map */}
+                  {activeMapServiceId === s.id && mapError && <p style={{ color: "var(--danger)", fontSize: 13, marginTop: 8 }}>{mapError}</p>}
                   {activeMapServiceId === s.id && myLocation && !mapError && (
-                    <MapView
-                      origin={myLocation}
-                      destination={{
-                        lat: s.provider.providerProfile.latitude,
-                        lng: s.provider.providerProfile.longitude,
-                      }}
+                    <MapView origin={myLocation} destination={{ lat: s.provider.providerProfile.latitude, lng: s.provider.providerProfile.longitude }}
                       originLabel={locationMode === "manual" ? manualAddress || "Your Location" : "Your Location"}
-                      destinationLabel={s.provider?.name || "Provider"}
-                    />
+                      destinationLabel={s.provider?.name || "Provider"} />
                   )}
                 </div>
-              ))}
-            </div>
-          </div>
-        );
+              </div>
+            ))}
+          </ViewContainer>
+        </div>
+      );
 
-      case "bookings":
-        return (
-          <div className="dashboard-section">
+      case "bookings": return (
+        <div className="dashboard-section">
+          <div className="section-header">
             <h2>My Bookings</h2>
+            <ViewModeToggle mode={bookingsView} onChange={setBookingsView} available={["grid", "list", "card", "table"]} />
+          </div>
 
-            <div className="services-grid">
-              {bookings.map((b) => (
-                <div key={b.id} className="card">
-                  <h3>{b.service?.name}</h3>
+          {/* Filters */}
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 24, padding: "16px 20px", background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)" }}>
+            <input placeholder="Filter by service name" value={filterService}
+              onChange={(e) => setFilterService(e.target.value)}
+              style={{ padding: "8px 12px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 14, minWidth: 180 }} />
+            <input placeholder="Filter by provider name" value={filterProvider}
+              onChange={(e) => setFilterProvider(e.target.value)}
+              style={{ padding: "8px 12px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 14, minWidth: 180 }} />
+            <input type="number" placeholder="Min price ₹" value={filterPriceMin}
+              onChange={(e) => setFilterPriceMin(e.target.value)}
+              style={{ padding: "8px 12px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 14, width: 120 }} />
+            <input type="number" placeholder="Max price ₹" value={filterPriceMax}
+              onChange={(e) => setFilterPriceMax(e.target.value)}
+              style={{ padding: "8px 12px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 14, width: 120 }} />
+            {(filterService || filterProvider || filterPriceMin || filterPriceMax) && (
+              <button onClick={() => { setFilterService(""); setFilterProvider(""); setFilterPriceMin(""); setFilterPriceMax(""); }}
+                style={{ padding: "8px 14px", background: "#fee2e2", color: "#dc2626", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
+                Clear Filters
+              </button>
+            )}
+          </div>
 
-                  <p><strong>Customer:</strong> {b.customer?.name}</p>
-                  <p><strong>Provider:</strong> {b.provider?.name}</p>
-                  <p><strong>Price:</strong> ₹ {b.service?.price}</p>
-                  <p><strong>Provider Phone:</strong> {b.provider?.phone}</p>
+          {filteredBookings.length === 0 && <p style={{ color: "var(--text-secondary)" }}>No bookings found.</p>}
 
-                  <hr />
-
-                  <p>
-                    <strong>Status:</strong>{" "}
-                    <span
-                      style={{
-                        color:
-                          b.status === "ACCEPTED" ? "green"
-                          : b.status === "REJECTED" ? "red"
-                          : "#f59e0b"
-                      }}
-                    >
-                      {b.status}
-                    </span>
+          <ViewContainer mode={bookingsView}>
+            {filteredBookings.map((b) => (
+              <div key={b.id} className="card">
+                <img src={getServiceImage(b.service?.name)} alt={b.service?.name}
+                  style={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 8, marginBottom: 12 }} />
+                <h3>{b.service?.name}</h3>
+                <p><strong>Provider:</strong> {b.provider?.name}</p>
+                <p><strong>Price:</strong> ₹ {b.service?.price}</p>
+                {b.bookingLocation && <p><strong>Location:</strong> {b.bookingLocation}</p>}
+                {b.cancellationReason && (
+                  <p style={{ color: "#dc2626", fontSize: 13 }}>
+                    <strong>Cancelled:</strong> {b.cancellationReason}
                   </p>
-
-                  {/* Payment Status Badge */}
-                  <p>
-                    <strong>Payment:</strong>{" "}
-                    <span
-                      style={{
-                        display: "inline-block",
-                        padding: "2px 10px",
-                        borderRadius: "999px",
-                        fontSize: "13px",
-                        fontWeight: "600",
-                        background: b.paymentStatus === "PAID" ? "#dcfce7" : "#fef9c3",
-                        color: b.paymentStatus === "PAID" ? "#16a34a" : "#92400e",
-                      }}
-                    >
-                      {b.paymentStatus === "PAID" ? "✅ PAID" : "⏳ UNPAID"}
-                    </span>
-                  </p>
-
-                  {/* Pay Now Button — only if ACCEPTED and not yet PAID */}
-                  {b.status === "ACCEPTED" && b.paymentStatus !== "PAID" && (
-                    <StripeCheckout booking={b} onSuccess={fetchBookings} />
+                )}
+                <hr />
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+                  <span className={`badge ${statusColor(b.status)}`}>{b.status}</span>
+                  <span className={`badge ${b.paymentStatus === "PAID" ? "badge-green" : "badge-yellow"}`}>
+                    {b.paymentStatus === "PAID" ? "PAID" : "UNPAID"}
+                  </span>
+                </div>
+                <div className="card-actions">
+                  {/* Pay button only when COMPLETED */}
+                  <RazorpayCheckout booking={b} onSuccess={fetchBookings} />
+                  {b.status === "COMPLETED" && (
+                    <button onClick={() => setSelectedBooking(b)}
+                      style={{ padding: "8px 14px", background: "var(--primary-light)", color: "var(--primary)", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
+                      Leave Review
+                    </button>
                   )}
-
-                  {/* Give Review Button */}
-                  {b.status === "ACCEPTED" && (
-                    <button
-                      onClick={() => setSelectedBooking(b)}
-                      style={{
-                        marginTop: "10px",
-                        padding: "8px 14px",
-                        backgroundColor: "#2563eb",
-                        color: "white",
-                        border: "none",
-                        borderRadius: "6px",
-                        cursor: "pointer",
-                        display: "block",
-                      }}
-                    >
-                      Give Review
+                  {["PENDING", "ACCEPTED"].includes(b.status) && (
+                    <button onClick={() => setCancelBooking(b)}
+                      style={{ padding: "8px 14px", background: "#fee2e2", color: "#dc2626", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
+                      Cancel
+                    </button>
+                  )}
+                  {b.status === "COMPLETED" && (
+                    <button onClick={() => deleteBooking(b.id)}
+                      style={{ padding: "8px 14px", background: "#f1f5f9", color: "#64748b", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
+                      Delete
                     </button>
                   )}
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
+          </ViewContainer>
 
-            {/* Review Modal */}
-            {selectedBooking && (
-              <ReviewModal
-                booking={selectedBooking}
-                onClose={() => setSelectedBooking(null)}
-              />
-            )}
-          </div>
-        );
+          {selectedBooking && <ReviewModal booking={selectedBooking} onClose={() => setSelectedBooking(null)} onSuccess={fetchBookings} />}
+          {cancelBooking && <CancellationModal booking={cancelBooking} onClose={() => setCancelBooking(null)} onSuccess={fetchBookings} />}
+        </div>
+      );
 
-      case "profile":
-        return (
-          <div className="dashboard-section">
-            <h2>My Profile</h2>
+      case "profile": return (
+        <div className="dashboard-section">
+          <div className="section-header"><h2>My Profile</h2></div>
 
-            <form onSubmit={updateProfile} className="dashboard-form">
-              <input
-                type="text"
-                value={profile.name || ""}
-                onChange={(e) => setProfile({ ...profile, name: e.target.value })}
-                placeholder="Name"
-              />
-              <input
-                type="email"
-                value={profile.email || ""}
-                disabled
-              />
-              <input
-                type="text"
-                value={profile.phone || ""}
-                onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
-                placeholder="Phone Number"
-              />
-              <input
-                type="text"
-                value={profile.location || ""}
-                onChange={(e) => setProfile({ ...profile, location: e.target.value })}
-                placeholder="Location"
-              />
-              <button className="dashboard-btn">Update Profile</button>
-            </form>
-
-            {/* ================= SHARE MY LOCATION ================= */}
-            <div style={{
-              marginTop: "30px",
-              padding: "20px",
-              background: locationShared ? "#f0fdf4" : "#eff6ff",
-              borderRadius: "12px",
-              border: `1px solid ${locationShared ? "#86efac" : "#bfdbfe"}`,
-            }}>
-              <h3 style={{ margin: "0 0 6px 0", fontSize: "16px", color: "#1e293b" }}>
-                📍 Share Your GPS Location
-              </h3>
-              <p style={{ margin: "0 0 14px 0", fontSize: "14px", color: "#64748b", lineHeight: "1.5" }}>
-                Providers need your GPS coordinates to see the route to you.
-                Click the button below — your browser will ask for location permission. Click <strong>Allow</strong>.
+          <div style={{ display: "flex", gap: 32, alignItems: "flex-start", flexWrap: "wrap" }}>
+            <ProfileImageUpload
+              currentImage={profileImage}
+              onUpdate={(url) => {
+                setProfileImage(url);
+                const u = JSON.parse(localStorage.getItem("user") || "{}");
+                u.profileImage = url;
+                localStorage.setItem("user", JSON.stringify(u));
+              }}
+            />
+            <form onSubmit={updateProfile} className="dashboard-form" style={{ flex: 1, maxWidth: 440 }}>
+              <p style={{ color: "var(--text-secondary)", marginBottom: 16, fontSize: 14 }}>
+                Your profile location is used as the default booking location.
               </p>
-
-              {locationShared && (
-                <div style={{
-                  padding: "8px 14px",
-                  background: "#dcfce7",
-                  borderRadius: "8px",
-                  color: "#16a34a",
-                  fontSize: "14px",
-                  fontWeight: "600",
-                  marginBottom: "12px",
-                }}>
-                  ✅ Location saved! Providers can now see the route to you.
-                </div>
-              )}
-
-              <button
-                onClick={shareMyLocation}
-                disabled={sharingLocation}
-                style={{
-                  width: "100%",
-                  padding: "12px",
-                  background: locationShared ? "#16a34a" : "#2563eb",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "8px",
-                  fontSize: "15px",
-                  fontWeight: "600",
-                  cursor: sharingLocation ? "not-allowed" : "pointer",
-                  opacity: sharingLocation ? 0.7 : 1,
-                }}
-              >
-                {sharingLocation
-                  ? "📡 Saving your location..."
-                  : locationShared
-                  ? "🔄 Update My Location"
-                  : "📍 Share My Location"}
-              </button>
-            </div>
+              <input type="text" value={profile.name || ""} onChange={(e) => setProfile({ ...profile, name: e.target.value })} placeholder="Full Name" />
+              <input type="email" value={profile.email || ""} disabled style={{ opacity: 0.6, cursor: "not-allowed" }} />
+              <input type="tel" value={profile.phone || ""} onChange={(e) => setProfile({ ...profile, phone: e.target.value })} placeholder="Phone Number" />
+              <input type="text" value={profile.location || ""} onChange={(e) => setProfile({ ...profile, location: e.target.value })} placeholder="Your Location" />
+              <button type="submit" className="dashboard-btn">Save Changes</button>
+            </form>
           </div>
-        );
+        </div>
+      );
 
-      default:
-        return null;
+      default: return null;
     }
   };
 
   return (
     <div className="dashboard-layout">
       <aside className="sidebar">
-        <h3>Customer Panel</h3>
-        <button onClick={() => setActiveTab("explore")}>Explore Services</button>
-        <button onClick={() => setActiveTab("bookings")}>My Bookings</button>
-        <button onClick={() => setActiveTab("profile")}>My Profile</button>
-        <button onClick={handleLogout} className="logout">Logout</button>
+        <div className="sidebar-logo">ServiceHub</div>
+        <NavButton tab="explore" label="Explore Services" />
+        <NavButton tab="bookings" label="My Bookings" />
+        <NavButton tab="profile" label="My Profile" />
+        <button className="logout" onClick={() => { localStorage.clear(); navigate("/"); }}>
+          Logout
+        </button>
       </aside>
+      <main className="dashboard-content">{renderContent()}</main>
 
-      <main className="dashboard-content">
-        {renderContent()}
-      </main>
+      {confirmedBooking && (
+        <BookingConfirmModal booking={confirmedBooking} onClose={handleConfirmClose} />
+      )}
     </div>
   );
 };
