@@ -450,9 +450,6 @@ const CustomerDashboard = () => {
               }}
             />
             <form onSubmit={updateProfile} className="dashboard-form" style={{ flex: 1, maxWidth: 440 }}>
-              <p style={{ color: "var(--text-secondary)", marginBottom: 16, fontSize: 14 }}>
-                Your profile location is used as the default booking location.
-              </p>
               <input type="text" value={profile.name || ""} onChange={(e) => setProfile({ ...profile, name: e.target.value })} placeholder="Full Name" />
               <input type="email" value={profile.email || ""} disabled style={{ opacity: 0.6, cursor: "not-allowed" }} />
               <input type="tel" value={profile.phone || ""} onChange={(e) => setProfile({ ...profile, phone: e.target.value })} placeholder="Phone Number" />
