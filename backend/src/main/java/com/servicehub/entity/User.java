@@ -24,7 +24,7 @@ public class User {
     @Column(nullable = false, unique = true)
     private String email;
 
-    @Column(nullable = true)   // nullable for Google-only accounts
+    @Column(nullable = true)
     @JsonIgnore
     private String password;
 
@@ -43,7 +43,6 @@ public class User {
     @Column(name = "longitude")
     private Double longitude;
 
-    // ── NEW: Google OAuth fields ──────────────────────────────
     @Column(name = "google_id")
     private String googleId;
 
@@ -51,8 +50,18 @@ public class User {
     private String profileImage;
 
     @Column(name = "auth_provider", length = 50)
-    private String authProvider = "LOCAL";   // LOCAL | GOOGLE
-    // ─────────────────────────────────────────────────────────
+    private String authProvider = "LOCAL";
+
+    // ACTIVE | SUSPENDED | DELETED
+    @Column(name = "status", length = 20)
+    private String status = "ACTIVE";
+
+    // Soft delete flag
+    @Column(name = "is_deleted")
+    private Boolean isDeleted = false;
+
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -67,7 +76,6 @@ public class User {
     @JsonIgnore
     private List<Booking> bookings;
 
-    // Original constructor (password registration)
     public User(String name, String email, String password, String phone, UserRole role) {
         this.name = name;
         this.email = email;
@@ -75,12 +83,16 @@ public class User {
         this.phone = phone;
         this.role = role;
         this.authProvider = "LOCAL";
+        this.status = "ACTIVE";
+        this.isDeleted = false;
     }
 
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
+        if (status == null) status = "ACTIVE";
+        if (isDeleted == null) isDeleted = false;
     }
 
     @PreUpdate

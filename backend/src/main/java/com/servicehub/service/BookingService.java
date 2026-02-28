@@ -26,13 +26,11 @@ public class BookingService {
     private final ServiceRepository serviceRepository;
     private final EmailService emailService;
 
-    // ── Provider: get all requests sorted newest first ────────
     public List<Booking> getProviderRequests(Authentication authentication) {
         User provider = getUserFromAuth(authentication);
         return bookingRepository.findByProviderOrderByCreatedAtDesc(provider);
     }
 
-    // ── Provider: get requests with optional status filter ────
     public List<Booking> getProviderRequestsFiltered(String status, String sortDir,
             Authentication authentication) {
         User provider = getUserFromAuth(authentication);
@@ -48,13 +46,11 @@ public class BookingService {
         return bookings;
     }
 
-    // ── Customer: get all bookings sorted newest first ────────
     public List<Booking> getCustomerBookings(Authentication authentication) {
         User customer = getUserFromAuth(authentication);
         return bookingRepository.findByCustomerOrderByCreatedAtDesc(customer);
     }
 
-    // ── Update booking status ────────────────────────────────
     public Booking updateStatus(Long bookingId, String status) {
         Booking booking = bookingRepository.findById(bookingId)
                 .orElseThrow(() -> new RuntimeException("Booking not found"));
@@ -69,7 +65,6 @@ public class BookingService {
         return saved;
     }
 
-    // ── Create booking ────────────────────────────────────────
     public Booking createBooking(Long serviceId,
                                  String bookingLocation,
                                  Double bookingLatitude,
@@ -104,7 +99,6 @@ public class BookingService {
         return saved;
     }
 
-    // ── Cancel booking (customer or provider) ─────────────────
     public Booking cancelBooking(Long bookingId, CancellationRequest req,
             Authentication authentication) {
 
@@ -137,7 +131,9 @@ public class BookingService {
         return saved;
     }
 
-    // ── Soft delete booking (only after COMPLETED) ────────────
+    /**
+     * Soft delete — EXTENDED: now allows COMPLETED, CANCELLED, and REJECTED bookings.
+     */
     public void deleteBooking(Long bookingId, Authentication authentication) {
 
         User user = getUserFromAuth(authentication);
@@ -151,8 +147,12 @@ public class BookingService {
             throw new RuntimeException("Unauthorized: Cannot delete this booking");
         }
 
-        if (!"COMPLETED".equals(booking.getStatus())) {
-            throw new RuntimeException("Booking can only be deleted after it is COMPLETED");
+        // Allow delete for COMPLETED, CANCELLED, or REJECTED
+        List<String> deletableStatuses = List.of("COMPLETED", "CANCELLED", "REJECTED");
+        if (!deletableStatuses.contains(booking.getStatus())) {
+            throw new RuntimeException(
+                "Booking can only be deleted when status is COMPLETED, CANCELLED, or REJECTED. Current: " + booking.getStatus()
+            );
         }
 
         booking.setIsDeleted(true);
@@ -160,7 +160,6 @@ public class BookingService {
         bookingRepository.save(booking);
     }
 
-    // ── Helper ────────────────────────────────────────────────
     private User getUserFromAuth(Authentication authentication) {
         return userRepository.findByEmail(authentication.getName())
                 .orElseThrow(() -> new RuntimeException("User not found"));

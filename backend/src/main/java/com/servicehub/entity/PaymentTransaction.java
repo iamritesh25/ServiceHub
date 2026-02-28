@@ -33,6 +33,16 @@ public class PaymentTransaction {
     @Column(nullable = false)
     private BigDecimal amount;
 
+    // NEW: commission tracking
+    @Column(name = "commission_percent")
+    private BigDecimal commissionPercent;
+
+    @Column(name = "commission_amount")
+    private BigDecimal commissionAmount;
+
+    @Column(name = "provider_payout")
+    private BigDecimal providerPayout;
+
     @Column(length = 10)
     private String currency = "INR";
 

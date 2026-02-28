@@ -36,5 +36,5 @@ frontend/build/
 # ========================
 .DS_Store
 Thumbs.db
-
+QueryToolData.sql
 backend/uploads/

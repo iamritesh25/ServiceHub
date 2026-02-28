@@ -8,6 +8,7 @@ import com.servicehub.entity.Booking;
 import com.servicehub.entity.PaymentTransaction;
 import com.servicehub.repository.BookingRepository;
 import com.servicehub.repository.PaymentTransactionRepository;
+import com.servicehub.repository.SystemConfigRepository;
 import com.servicehub.repository.UserRepository;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Service;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
 import java.util.Map;
@@ -34,19 +36,35 @@ public class PaymentService {
     private final UserRepository userRepository;
     private final EmailService emailService;
     private final PaymentTransactionRepository transactionRepository;
+    private final SystemConfigRepository systemConfigRepository;
 
     public PaymentService(BookingRepository bookingRepository,
                           UserRepository userRepository,
                           EmailService emailService,
-                          PaymentTransactionRepository transactionRepository) {
+                          PaymentTransactionRepository transactionRepository,
+                          SystemConfigRepository systemConfigRepository) {
         this.bookingRepository = bookingRepository;
         this.userRepository = userRepository;
         this.emailService = emailService;
         this.transactionRepository = transactionRepository;
+        this.systemConfigRepository = systemConfigRepository;
+    }
+
+    /**
+     * Fetch commission % dynamically from DB. Defaults to 0 if not configured.
+     */
+    private BigDecimal getCommissionPercent() {
+        return systemConfigRepository.findByConfigKey("commission_percent")
+                .map(cfg -> {
+                    try { return new BigDecimal(cfg.getConfigValue()); }
+                    catch (Exception e) { return BigDecimal.ZERO; }
+                })
+                .orElse(BigDecimal.ZERO);
     }
 
     /**
      * STEP 1: Create Razorpay Order — only allowed when booking is COMPLETED.
+     * Amount charged to customer = service price (commission is deducted from provider payout).
      */
     public Map<String, Object> createOrder(Long bookingId, Authentication authentication)
             throws RazorpayException {
@@ -68,7 +86,11 @@ public class PaymentService {
             throw new RuntimeException("Payment is only allowed after service is COMPLETED");
         }
 
-        long amountInPaise = (long) (booking.getService().getPrice() * 100);
+        Double servicePrice = booking.getService().getPrice();
+        if (servicePrice == null) servicePrice = booking.getService().getMinPrice();
+        if (servicePrice == null) servicePrice = 0.0;
+
+        long amountInPaise = (long) (servicePrice * 100);
 
         RazorpayClient client = new RazorpayClient(razorpayKeyId, razorpayKeySecret);
 
@@ -80,22 +102,34 @@ public class PaymentService {
 
         Order order = client.orders.create(orderRequest);
 
-        // Persist transaction record
+        // Calculate commission and provider payout
+        BigDecimal amount = BigDecimal.valueOf(servicePrice);
+        BigDecimal commissionPct = getCommissionPercent();
+        BigDecimal commissionAmt = amount.multiply(commissionPct)
+                .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+        BigDecimal providerPayout = amount.subtract(commissionAmt);
+
+        // Persist transaction with commission breakdown
         PaymentTransaction txn = new PaymentTransaction();
         txn.setBooking(booking);
         txn.setRazorpayOrderId(order.get("id"));
-        txn.setAmount(BigDecimal.valueOf(booking.getService().getPrice()));
+        txn.setAmount(amount);
+        txn.setCommissionPercent(commissionPct);
+        txn.setCommissionAmount(commissionAmt);
+        txn.setProviderPayout(providerPayout);
         txn.setCurrency("INR");
         txn.setStatus("CREATED");
         transactionRepository.save(txn);
 
         return Map.of(
-            "orderId",    order.get("id"),
-            "amount",     amountInPaise,
-            "currency",   "INR",
-            "keyId",      razorpayKeyId,
-            "bookingId",  bookingId,
-            "serviceName", booking.getService().getName()
+            "orderId",       order.get("id"),
+            "amount",        amountInPaise,
+            "currency",      "INR",
+            "keyId",         razorpayKeyId,
+            "bookingId",     bookingId,
+            "serviceName",   booking.getService().getName(),
+            "commission",    commissionPct,
+            "providerPayout", providerPayout
         );
     }
 
@@ -122,11 +156,9 @@ public class PaymentService {
             throw new RuntimeException("Payment signature verification failed");
         }
 
-        // Update booking payment status
         booking.setPaymentStatus("PAID");
         bookingRepository.save(booking);
 
-        // Update transaction record
         transactionRepository.findByRazorpayOrderId(req.getRazorpayOrderId())
             .ifPresent(txn -> {
                 txn.setRazorpayPaymentId(req.getRazorpayPaymentId());
@@ -135,12 +167,10 @@ public class PaymentService {
                 transactionRepository.save(txn);
             });
 
-        // Send email notifications
         emailService.sendCustomerPaymentConfirmation(booking);
         emailService.sendProviderPaymentNotification(booking);
     }
 
-    // ── HMAC-SHA256 helper ──────────────────────────────────────
     private String hmacSha256(String data, String secret) throws Exception {
         Mac mac = Mac.getInstance("HmacSHA256");
         SecretKeySpec secretKeySpec = new SecretKeySpec(

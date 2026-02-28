@@ -2,5 +2,6 @@ package com.servicehub.entity;
 
 public enum UserRole {
     CUSTOMER,
-    PROVIDER
+    PROVIDER,
+    ADMIN
 }

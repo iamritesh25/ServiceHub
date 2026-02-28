@@ -8,6 +8,8 @@ import Register from "./pages/Register";
 import ProviderDashboard from "./pages/ProviderDashboard";
 import CustomerDashboard from "./pages/CustomerDashboard";
 import PaymentSuccess from "./pages/PaymentSuccess";
+import AdminLogin from "./pages/AdminLogin";
+import AdminDashboard from "./pages/AdminDashboard";
 import { AuthProvider } from "./auth/AuthContext";
 import "./App.css";
 
@@ -27,7 +29,6 @@ function App() {
       <Router>
         <ScrollToTop />
 
-        {/* Global toast container — must be here so it is always mounted */}
         <Toaster
           position="top-right"
           toastOptions={{
@@ -43,28 +44,24 @@ function App() {
             },
             success: {
               iconTheme: { primary: "#22c55e", secondary: "#fff" },
-              style: {
-                background: "#0f172a",
-                border: "1px solid #22c55e33",
-              },
+              style: { background: "#0f172a", border: "1px solid #22c55e33" },
             },
             error: {
               iconTheme: { primary: "#ef4444", secondary: "#fff" },
-              style: {
-                background: "#0f172a",
-                border: "1px solid #ef444433",
-              },
+              style: { background: "#0f172a", border: "1px solid #ef444433" },
             },
           }}
         />
 
         <Routes>
-          <Route path="/" element={<Landing />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
+          <Route path="/"                   element={<Landing />} />
+          <Route path="/login"              element={<Login />} />
+          <Route path="/register"           element={<Register />} />
           <Route path="/provider-dashboard" element={<ProviderDashboard />} />
           <Route path="/customer-dashboard" element={<CustomerDashboard />} />
-          <Route path="/payment-success" element={<PaymentSuccess />} />
+          <Route path="/payment-success"    element={<PaymentSuccess />} />
+          <Route path="/admin/login"        element={<AdminLogin />} />
+          <Route path="/admin/dashboard"    element={<AdminDashboard />} />
         </Routes>
 
       </Router>

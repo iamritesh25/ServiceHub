@@ -18,7 +18,19 @@ public class Service {
 
     private String name;
 
+    // Fixed price (kept for backward compat — null when price range is used)
     private Double price;
+
+    // NEW: price range support
+    @Column(name = "min_price")
+    private Double minPrice;
+
+    @Column(name = "max_price")
+    private Double maxPrice;
+
+    // FIXED | RANGE
+    @Column(name = "price_type", length = 10)
+    private String priceType = "FIXED";
 
     @Column(length = 1000)
     private String description;
@@ -32,5 +44,13 @@ public class Service {
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
+    }
+
+    // Convenience: display price string
+    public String getPriceDisplay() {
+        if ("RANGE".equals(priceType) && minPrice != null && maxPrice != null) {
+            return "₹" + minPrice.intValue() + " – ₹" + maxPrice.intValue();
+        }
+        return price != null ? "₹" + price.intValue() : "₹0";
     }
 }

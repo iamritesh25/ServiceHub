@@ -37,10 +37,16 @@ public class SecurityConfig {
 
                 // PUBLIC
                 .requestMatchers("/api/auth/**").permitAll()
-                .requestMatchers("/uploads/**").permitAll()     // profile images
+                .requestMatchers("/uploads/**").permitAll()
                 .requestMatchers("/v3/api-docs/**").permitAll()
                 .requestMatchers("/swagger-ui/**").permitAll()
                 .requestMatchers("/swagger-ui.html").permitAll()
+
+                // ADMIN LOGIN — public (role validated inside controller)
+                .requestMatchers(HttpMethod.POST, "/api/admin/login").permitAll()
+
+                // ADMIN — all other routes require ADMIN role (enforced via @PreAuthorize too)
+                .requestMatchers("/api/admin/**").hasRole("ADMIN")
 
                 // CUSTOMER
                 .requestMatchers("/api/customer/**").hasRole("CUSTOMER")

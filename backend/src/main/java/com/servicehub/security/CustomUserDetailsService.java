@@ -23,17 +23,21 @@ public class CustomUserDetailsService implements UserDetailsService {
                 .orElseThrow(() ->
                         new UsernameNotFoundException("User not found"));
 
-        // 🔥 VERY IMPORTANT FIX
-        // Add ROLE_ prefix
+        // Block suspended or soft-deleted users from authentication
+        if ("SUSPENDED".equals(user.getStatus())) {
+            throw new UsernameNotFoundException("Account is suspended. Contact support.");
+        }
+        if (Boolean.TRUE.equals(user.getIsDeleted())) {
+            throw new UsernameNotFoundException("Account not found.");
+        }
+
         List<SimpleGrantedAuthority> authorities = List.of(
-                new SimpleGrantedAuthority(
-                        "ROLE_" + user.getRole().name()
-                )
+                new SimpleGrantedAuthority("ROLE_" + user.getRole().name())
         );
 
         return new org.springframework.security.core.userdetails.User(
                 user.getEmail(),
-                user.getPassword(),
+                user.getPassword() != null ? user.getPassword() : "",
                 authorities
         );
     }

@@ -43,8 +43,7 @@ public class UserService {
                 dto.getEmail(),
                 passwordEncoder.encode(dto.getPassword()),
                 dto.getPhone(),
-                dto.getRole()
-        );
+                dto.getRole());
 
         User savedUser = userRepository.save(user);
 
@@ -61,6 +60,14 @@ public class UserService {
             throw new RuntimeException("Invalid credentials");
         }
 
+        // Block suspended or deleted users from logging in
+        if ("SUSPENDED".equals(user.getStatus())) {
+            throw new RuntimeException("Your account has been suspended. Please contact support.");
+        }
+        if (Boolean.TRUE.equals(user.getIsDeleted())) {
+            throw new RuntimeException("Invalid credentials");
+        }
+
         String token = jwtService.generateToken(user);
 
         UserResponseDTO response = new UserResponseDTO(
@@ -69,8 +76,7 @@ public class UserService {
                 user.getEmail(),
                 user.getPhone(),
                 user.getRole(),
-                user.getCreatedAt()
-        );
+                user.getCreatedAt());
 
         response.setToken(token);
         response.setProfileImage(user.getProfileImage());
@@ -78,125 +84,79 @@ public class UserService {
         return response;
     }
 
-
     // ========================= GET USER BY ID =========================
     public UserResponseDTO getUserById(Long id) {
-
         User user = userRepository.findById(id)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException("User not found with id: " + id));
-
+                .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + id));
         return convertToResponseDTO(user);
     }
 
-    // ========================= GET USER BY EMAIL =========================
-    public UserResponseDTO getUserByEmail(String email) {
-
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException("User not found with email: " + email));
-
-        return convertToResponseDTO(user);
-    }
-
-    // ========================= GET USERS BY ROLE =========================
-    public List<UserResponseDTO> getUsersByRole(UserRole role) {
-
-        return userRepository.findByRole(role)
-                .stream()
-                .map(this::convertToResponseDTO)
-                .collect(Collectors.toList());
-    }
-
-    // ========================= GET ALL USERS =========================
-    public List<UserResponseDTO> getAllUsers() {
-
-        return userRepository.findAll()
-                .stream()
-                .map(this::convertToResponseDTO)
-                .collect(Collectors.toList());
-    }
-
-    // ========================= UPDATE USER =========================
-    public UserResponseDTO updateUser(Long id, UserRegistrationDTO dto) {
-
-        User user = userRepository.findById(id)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException("User not found with id: " + id));
-
-        user.setName(dto.getName());
-        user.setPhone(dto.getPhone());
-
-        if (dto.getPassword() != null && !dto.getPassword().isBlank()) {
-            user.setPassword(passwordEncoder.encode(dto.getPassword()));
-        }
-
-        User updatedUser = userRepository.save(user);
-
-        return convertToResponseDTO(updatedUser);
-    }
-
-    // ========================= DELETE USER =========================
-    public void deleteUser(Long id) {
-
-        if (!userRepository.existsById(id)) {
-            throw new ResourceNotFoundException("User not found with id: " + id);
-        }
-
-        userRepository.deleteById(id);
-    }
-
-    // ========================= CHECK USER EXISTS =========================
-    public boolean userExists(Long id) {
-        return userRepository.existsById(id);
-    }
-
-    // ========================= GET USER ENTITY (Internal Use) =========================
+    // ========================= GET USER ENTITY BY ID =========================
     public User getUserEntity(Long id) {
-
         return userRepository.findById(id)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException("User not found with id: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + id));
     }
 
-    // ========================= CONVERT ENTITY → DTO =========================
-    private UserResponseDTO convertToResponseDTO(User user) {
+    // ========================= GET USER ENTITY BY EMAIL =========================
+    public User getUserEntityByEmail(String email) {
+        return userRepository.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found with email: " + email));
+    }
 
+    // ========================= GET CURRENT USER =========================
+    public UserResponseDTO getCurrentUser(Authentication authentication) {
+        String email = authentication.getName();
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        return convertToResponseDTO(user);
+    }
+
+    // ========================= GET ALL CUSTOMERS =========================
+    public List<UserResponseDTO> getAllCustomers() {
+        return userRepository.findByRole(UserRole.CUSTOMER)
+                .stream()
+                .map(this::convertToResponseDTO)
+                .collect(Collectors.toList());
+    }
+
+    // ========================= GET ALL PROVIDERS =========================
+    public List<UserResponseDTO> getAllProviders() {
+        return userRepository.findByRole(UserRole.PROVIDER)
+                .stream()
+                .map(this::convertToResponseDTO)
+                .collect(Collectors.toList());
+    }
+
+    // ========================= UPDATE CUSTOMER PROFILE =========================
+    public UserResponseDTO updateCustomerProfile(UpdateCustomerProfileDTO dto, Authentication authentication) {
+        String email = authentication.getName();
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        if (dto.getName() != null && !dto.getName().isBlank()) {
+            user.setName(dto.getName());
+        }
+        if (dto.getPhone() != null) {
+            user.setPhone(dto.getPhone());
+        }
+        if (dto.getLocation() != null) {
+            user.setLocation(dto.getLocation());
+        }
+
+        User savedUser = userRepository.save(user);
+        return convertToResponseDTO(savedUser);
+    }
+
+    // ========================= CONVERT TO DTO =========================
+    public UserResponseDTO convertToResponseDTO(User user) {
         UserResponseDTO dto = new UserResponseDTO(
                 user.getId(),
                 user.getName(),
                 user.getEmail(),
                 user.getPhone(),
                 user.getRole(),
-                user.getCreatedAt()
-        );
+                user.getCreatedAt());
         dto.setProfileImage(user.getProfileImage());
         return dto;
     }
-    public User getUserEntityByEmail(String email) {
-        return userRepository.findByEmail(email)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException("User not found with email: " + email));
-    }
-    
-    public User getCurrentUser(Authentication authentication) {
-
-        String email = authentication.getName();
-
-        return userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("User not found"));
-    }
-
-    public User updateCustomerProfile(UpdateCustomerProfileDTO dto,
-            Authentication authentication) {
-
-User user = getCurrentUser(authentication);
-
-user.setName(dto.getName());
-user.setPhone(dto.getPhone());   // ✅ changed
-user.setLocation(dto.getLocation());
-
-return userRepository.save(user);
-}
-    
 }

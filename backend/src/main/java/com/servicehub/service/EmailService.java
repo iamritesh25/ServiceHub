@@ -1,6 +1,7 @@
 package com.servicehub.service;
 
 import com.servicehub.entity.Booking;
+import com.servicehub.repository.SystemConfigRepository;
 import jakarta.mail.internet.MimeMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,11 +17,25 @@ public class EmailService {
     @Autowired
     private JavaMailSender mailSender;
 
+    @Autowired
+    private SystemConfigRepository systemConfigRepository;
+
+    /**
+     * Centralized email guard — reads email_notifications flag from DB dynamically.
+     * If disabled, all email methods short-circuit here. No changes needed in callers.
+     */
+    private boolean isEmailEnabled() {
+        return systemConfigRepository.findByConfigKey("email_notifications")
+                .map(cfg -> "true".equalsIgnoreCase(cfg.getConfigValue()))
+                .orElse(true); // default: enabled
+    }
+
     // ─────────────────────────────────────────────────────────────────
     //  A) Customer books → email to PROVIDER
     // ─────────────────────────────────────────────────────────────────
     @Async
     public void sendProviderBookingRequestNotification(Booking booking) {
+        if (!isEmailEnabled()) { log.info("Email disabled — skipping booking request notification"); return; }
         try {
             String location = booking.getBookingLocation() != null
                     ? booking.getBookingLocation()
@@ -40,7 +55,7 @@ public class EmailService {
 
             sendHtml(
                     booking.getProvider().getEmail(),
-                    "📩 New Booking Request — ServiceHub #" + booking.getId(),
+                    "New Booking Request — ServiceHub #" + booking.getId(),
                     html
             );
             log.info("Booking request email sent to provider: {}", booking.getProvider().getEmail());
@@ -54,6 +69,7 @@ public class EmailService {
     // ─────────────────────────────────────────────────────────────────
     @Async
     public void sendCustomerBookingAcceptedNotification(Booking booking) {
+        if (!isEmailEnabled()) { log.info("Email disabled — skipping booking accepted notification"); return; }
         try {
             String location = booking.getBookingLocation() != null
                     ? booking.getBookingLocation()
@@ -74,7 +90,7 @@ public class EmailService {
 
             sendHtml(
                     booking.getCustomer().getEmail(),
-                    "✅ Booking Accepted — ServiceHub #" + booking.getId(),
+                    "Booking Accepted — ServiceHub #" + booking.getId(),
                     html
             );
             log.info("Booking accepted email sent to customer: {}", booking.getCustomer().getEmail());
@@ -88,6 +104,7 @@ public class EmailService {
     // ─────────────────────────────────────────────────────────────────
     @Async
     public void sendCustomerPaymentConfirmation(Booking booking) {
+        if (!isEmailEnabled()) { log.info("Email disabled — skipping payment confirmation"); return; }
         try {
             String html = buildPaymentConfirmationHtml(
                     booking.getCustomer().getName(),
@@ -99,7 +116,7 @@ public class EmailService {
 
             sendHtml(
                     booking.getCustomer().getEmail(),
-                    "💳 Payment Confirmed — ServiceHub #" + booking.getId(),
+                    "Payment Confirmed — ServiceHub #" + booking.getId(),
                     html
             );
             log.info("Payment confirmation email sent to customer: {}", booking.getCustomer().getEmail());
@@ -113,6 +130,7 @@ public class EmailService {
     // ─────────────────────────────────────────────────────────────────
     @Async
     public void sendProviderPaymentNotification(Booking booking) {
+        if (!isEmailEnabled()) { log.info("Email disabled — skipping provider payment notification"); return; }
         try {
             String html = buildProviderPaymentHtml(
                     booking.getProvider().getName(),
@@ -124,7 +142,7 @@ public class EmailService {
 
             sendHtml(
                     booking.getProvider().getEmail(),
-                    "💰 Payment Received — ServiceHub #" + booking.getId(),
+                    "Payment Received — ServiceHub #" + booking.getId(),
                     html
             );
             log.info("Payment notification email sent to provider: {}", booking.getProvider().getEmail());
@@ -138,45 +156,28 @@ public class EmailService {
     // ─────────────────────────────────────────────────────────────────
     @Async
     public void sendCancellationNotifications(Booking booking) {
+        if (!isEmailEnabled()) { log.info("Email disabled — skipping cancellation notification"); return; }
         try {
             String cancelledBy = "CUSTOMER".equals(booking.getCancelledBy()) ? "Customer" : "Provider";
             String reason = booking.getCancellationReason() != null ? booking.getCancellationReason() : "Not specified";
 
-            // Email to customer
             String customerHtml = buildCancellationHtml(
-                    booking.getCustomer().getName(),
-                    booking.getId(),
-                    booking.getService().getName(),
-                    booking.getProvider().getName(),
-                    booking.getService().getPrice(),
-                    reason,
-                    cancelledBy,
-                    "customer"
+                    booking.getCustomer().getName(), booking.getId(),
+                    booking.getService().getName(), booking.getProvider().getName(),
+                    booking.getService().getPrice(), reason, cancelledBy, "customer"
             );
-            sendHtml(
-                    booking.getCustomer().getEmail(),
-                    "❌ Booking Cancelled — ServiceHub #" + booking.getId(),
-                    customerHtml
-            );
-            log.info("Cancellation email sent to customer: {}", booking.getCustomer().getEmail());
+            sendHtml(booking.getCustomer().getEmail(),
+                    "Booking Cancelled — ServiceHub #" + booking.getId(), customerHtml);
 
-            // Email to provider
             String providerHtml = buildCancellationHtml(
-                    booking.getProvider().getName(),
-                    booking.getId(),
-                    booking.getService().getName(),
-                    booking.getCustomer().getName(),
-                    booking.getService().getPrice(),
-                    reason,
-                    cancelledBy,
-                    "provider"
+                    booking.getProvider().getName(), booking.getId(),
+                    booking.getService().getName(), booking.getCustomer().getName(),
+                    booking.getService().getPrice(), reason, cancelledBy, "provider"
             );
-            sendHtml(
-                    booking.getProvider().getEmail(),
-                    "❌ Booking Cancelled — ServiceHub #" + booking.getId(),
-                    providerHtml
-            );
-            log.info("Cancellation email sent to provider: {}", booking.getProvider().getEmail());
+            sendHtml(booking.getProvider().getEmail(),
+                    "Booking Cancelled — ServiceHub #" + booking.getId(), providerHtml);
+
+            log.info("Cancellation emails sent for booking #{}", booking.getId());
         } catch (Exception e) {
             log.error("Failed to send cancellation email: {}", e.getMessage(), e);
         }
@@ -187,6 +188,7 @@ public class EmailService {
     // ─────────────────────────────────────────────────────────────────
     @Async
     public void sendServiceCompletedPayNow(Booking booking) {
+        if (!isEmailEnabled()) { log.info("Email disabled — skipping service completed notification"); return; }
         try {
             String html = buildServiceCompletedHtml(
                     booking.getCustomer().getName(),
@@ -197,7 +199,7 @@ public class EmailService {
             );
             sendHtml(
                     booking.getCustomer().getEmail(),
-                    "✅ Service Completed — Pay Now | ServiceHub #" + booking.getId(),
+                    "Service Completed — Pay Now | ServiceHub #" + booking.getId(),
                     html
             );
             log.info("Service completed pay-now email sent to customer: {}", booking.getCustomer().getEmail());
@@ -207,14 +209,14 @@ public class EmailService {
     }
 
     // ─────────────────────────────────────────────────────────────────
-    //  Core HTML sender — uses MimeMessage for proper HTML rendering
+    //  Core HTML sender
     // ─────────────────────────────────────────────────────────────────
     private void sendHtml(String to, String subject, String htmlBody) throws Exception {
         MimeMessage message = mailSender.createMimeMessage();
         MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
         helper.setTo(to);
         helper.setSubject(subject);
-        helper.setText(htmlBody, true); // true = isHtml
+        helper.setText(htmlBody, true);
         mailSender.send(message);
     }
 
@@ -251,14 +253,14 @@ public class EmailService {
                 <body>
                   <div class="wrapper">
                     <div class="header">
-                      <h1>🔧 ServiceHub</h1>
+                      <h1>ServiceHub</h1>
                       <p>%s</p>
                     </div>
                     <div class="body">
                       %s
                     </div>
                     <div class="footer">
-                      © 2025 ServiceHub. All rights reserved. | support@servicehub.com
+                      &copy; 2025 ServiceHub. All rights reserved. | support@servicehub.com
                     </div>
                   </div>
                 </body>
@@ -269,8 +271,8 @@ public class EmailService {
     private String buildProviderRequestHtml(String providerName, Long bookingId, String serviceName,
             Double price, String customerName, String customerPhone, String location) {
         String body = """
-                <p class="greeting">Hello, %s 👋</p>
-                <p>You have received a <strong>new booking request</strong> on ServiceHub. Review the details below and accept or reject from your dashboard.</p>
+                <p class="greeting">Hello, %s</p>
+                <p>You have received a <strong>new booking request</strong> on ServiceHub.</p>
                 <table class="info-table">
                   <tr><td>Booking ID</td><td><strong>#%d</strong></td></tr>
                   <tr><td>Service</td><td>%s</td></tr>
@@ -280,18 +282,16 @@ public class EmailService {
                   <tr><td>Service Location</td><td>%s</td></tr>
                   <tr><td>Status</td><td><span class="badge badge-yellow">PENDING</span></td></tr>
                 </table>
-                <p>Please log in to your dashboard to take action.</p>
-                <a href="http://localhost:5173/provider-dashboard" class="cta-btn">Open Dashboard →</a>
-                """.formatted(providerName, bookingId, serviceName, price,
-                customerName, customerPhone, location);
+                <a href="http://localhost:5173/provider-dashboard" class="cta-btn">Open Dashboard</a>
+                """.formatted(providerName, bookingId, serviceName, price, customerName, customerPhone, location);
         return wrapInLayout("New Booking Request", body);
     }
 
     private String buildCustomerAcceptedHtml(String customerName, Long bookingId, String serviceName,
             Double price, String location, String providerName, String providerPhone, String providerEmail) {
         String body = """
-                <p class="greeting">Great news, %s! 🎉</p>
-                <p>Your booking has been <strong>accepted</strong> by the provider. You can now proceed with the payment.</p>
+                <p class="greeting">Great news, %s!</p>
+                <p>Your booking has been <strong>accepted</strong> by the provider.</p>
                 <table class="info-table">
                   <tr><td>Booking ID</td><td><strong>#%d</strong></td></tr>
                   <tr><td>Service</td><td>%s</td></tr>
@@ -300,28 +300,26 @@ public class EmailService {
                   <tr><td>Provider</td><td>%s</td></tr>
                   <tr><td>Provider Phone</td><td>%s</td></tr>
                   <tr><td>Provider Email</td><td>%s</td></tr>
-                  <tr><td>Status</td><td><span class="badge badge-green">ACCEPTED ✅</span></td></tr>
+                  <tr><td>Status</td><td><span class="badge badge-green">ACCEPTED</span></td></tr>
                 </table>
-                <a href="http://localhost:5173/customer-dashboard" class="cta-btn">Pay Now →</a>
-                """.formatted(customerName, bookingId, serviceName, price,
-                location, providerName, providerPhone, providerEmail);
+                <a href="http://localhost:5173/customer-dashboard" class="cta-btn">View Booking</a>
+                """.formatted(customerName, bookingId, serviceName, price, location, providerName, providerPhone, providerEmail);
         return wrapInLayout("Booking Accepted", body);
     }
 
     private String buildPaymentConfirmationHtml(String customerName, Long bookingId,
             String serviceName, String providerName, Double price) {
         String body = """
-                <p class="greeting">Hello, %s 🎉</p>
-                <p>Your payment has been <strong>successfully processed</strong>. Here are your booking details:</p>
+                <p class="greeting">Hello, %s</p>
+                <p>Your payment has been <strong>successfully processed</strong>.</p>
                 <table class="info-table">
                   <tr><td>Booking ID</td><td><strong>#%d</strong></td></tr>
                   <tr><td>Service</td><td>%s</td></tr>
                   <tr><td>Provider</td><td>%s</td></tr>
                   <tr><td>Amount Paid</td><td><strong>₹ %.2f</strong></td></tr>
-                  <tr><td>Payment Status</td><td><span class="badge badge-green">PAID ✅</span></td></tr>
+                  <tr><td>Payment Status</td><td><span class="badge badge-green">PAID</span></td></tr>
                 </table>
-                <p>Thank you for using ServiceHub! We hope you enjoy the service.</p>
-                <a href="http://localhost:5173/customer-dashboard" class="cta-btn">View Booking →</a>
+                <a href="http://localhost:5173/customer-dashboard" class="cta-btn">View Booking</a>
                 """.formatted(customerName, bookingId, serviceName, providerName, price);
         return wrapInLayout("Payment Confirmed", body);
     }
@@ -329,16 +327,16 @@ public class EmailService {
     private String buildProviderPaymentHtml(String providerName, Long bookingId,
             String serviceName, String customerName, Double price) {
         String body = """
-                <p class="greeting">Hello, %s 💰</p>
-                <p>A payment has been <strong>received</strong> for your service. Please proceed with completing the booking.</p>
+                <p class="greeting">Hello, %s</p>
+                <p>A payment has been <strong>received</strong> for your service.</p>
                 <table class="info-table">
                   <tr><td>Booking ID</td><td><strong>#%d</strong></td></tr>
                   <tr><td>Service</td><td>%s</td></tr>
                   <tr><td>Customer</td><td>%s</td></tr>
                   <tr><td>Amount</td><td><strong>₹ %.2f</strong></td></tr>
-                  <tr><td>Payment Status</td><td><span class="badge badge-green">PAID ✅</span></td></tr>
+                  <tr><td>Payment Status</td><td><span class="badge badge-green">PAID</span></td></tr>
                 </table>
-                <a href="http://localhost:5173/provider-dashboard" class="cta-btn">View Dashboard →</a>
+                <a href="http://localhost:5173/provider-dashboard" class="cta-btn">View Dashboard</a>
                 """.formatted(providerName, bookingId, serviceName, customerName, price);
         return wrapInLayout("Payment Received", body);
     }
@@ -346,11 +344,10 @@ public class EmailService {
     private String buildCancellationHtml(String recipientName, Long bookingId,
             String serviceName, String otherPartyName, Double price,
             String reason, String cancelledBy, String recipientRole) {
-
         String otherLabel = "customer".equals(recipientRole) ? "Provider" : "Customer";
         String body = """
                 <p class="greeting">Hello, %s</p>
-                <p>Your booking has been <strong>cancelled</strong>. Here are the details:</p>
+                <p>Your booking has been <strong>cancelled</strong>.</p>
                 <table class="info-table">
                   <tr><td>Booking ID</td><td><strong>#%d</strong></td></tr>
                   <tr><td>Service</td><td>%s</td></tr>
@@ -358,10 +355,9 @@ public class EmailService {
                   <tr><td>Price</td><td>₹ %.2f</td></tr>
                   <tr><td>Cancelled By</td><td><strong>%s</strong></td></tr>
                   <tr><td>Reason</td><td>%s</td></tr>
-                  <tr><td>Status</td><td><span class="badge badge-gray" style="background:#f1f5f9;color:#475569;">CANCELLED ❌</span></td></tr>
+                  <tr><td>Status</td><td><span class="badge" style="background:#f1f5f9;color:#475569;">CANCELLED</span></td></tr>
                 </table>
-                <p>If you have any questions, please contact our support team.</p>
-                <a href="http://localhost:5173" class="cta-btn">Go to ServiceHub →</a>
+                <a href="http://localhost:5173" class="cta-btn">Go to ServiceHub</a>
                 """.formatted(recipientName, bookingId, serviceName,
                 otherLabel, otherPartyName, price, cancelledBy, reason);
         return wrapInLayout("Booking Cancelled", body);
@@ -370,17 +366,16 @@ public class EmailService {
     private String buildServiceCompletedHtml(String customerName, Long bookingId,
             String serviceName, String providerName, Double price) {
         String body = """
-                <p class="greeting">Hello, %s 🎊</p>
-                <p>Your service has been marked as <strong>completed</strong> by the provider. Please proceed to pay for the service.</p>
+                <p class="greeting">Hello, %s</p>
+                <p>Your service has been marked as <strong>completed</strong>. Please proceed to pay.</p>
                 <table class="info-table">
                   <tr><td>Booking ID</td><td><strong>#%d</strong></td></tr>
                   <tr><td>Service</td><td>%s</td></tr>
                   <tr><td>Provider</td><td>%s</td></tr>
                   <tr><td>Amount Due</td><td><strong>₹ %.2f</strong></td></tr>
-                  <tr><td>Status</td><td><span class="badge badge-blue">COMPLETED ✅</span></td></tr>
+                  <tr><td>Status</td><td><span class="badge badge-blue">COMPLETED</span></td></tr>
                 </table>
-                <p>Click below to go to your dashboard and complete the payment.</p>
-                <a href="http://localhost:5173/customer-dashboard" class="cta-btn">Pay Now →</a>
+                <a href="http://localhost:5173/customer-dashboard" class="cta-btn">Pay Now</a>
                 """.formatted(customerName, bookingId, serviceName, providerName, price);
         return wrapInLayout("Service Completed — Pay Now", body);
     }

@@ -1,7 +1,7 @@
 package com.servicehub.controller;
 
 import com.servicehub.dto.UpdateCustomerProfileDTO;
-import com.servicehub.entity.User;
+import com.servicehub.dto.UserResponseDTO;
 import com.servicehub.service.UserService;
 
 import org.springframework.security.core.Authentication;
@@ -18,13 +18,13 @@ public class CustomerController {
     }
 
     @GetMapping("/profile")
-    public User getProfile(Authentication authentication) {
+    public UserResponseDTO getProfile(Authentication authentication) {
         return userService.getCurrentUser(authentication);
     }
 
     @PutMapping("/profile")
-    public User updateProfile(@RequestBody UpdateCustomerProfileDTO dto,
-                              Authentication authentication) {
+    public UserResponseDTO updateProfile(@RequestBody UpdateCustomerProfileDTO dto,
+            Authentication authentication) {
         return userService.updateCustomerProfile(dto, authentication);
     }
 }

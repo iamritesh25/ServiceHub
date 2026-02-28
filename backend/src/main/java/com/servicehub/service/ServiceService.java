@@ -17,9 +17,7 @@ public class ServiceService {
 
     private final ServiceRepository serviceRepository;
     private final UserRepository userRepository;
-
     private final BookingRepository bookingRepository;
-
     private final ReviewRepository reviewRepository;
 
     public ServiceService(ServiceRepository serviceRepository,
@@ -44,9 +42,31 @@ public class ServiceService {
                 new com.servicehub.entity.Service();
 
         service.setName(dto.getName());
-        service.setPrice(dto.getPrice());
         service.setDescription(dto.getDescription());
         service.setProvider(provider);
+
+        // NEW: price range logic
+        String priceType = (dto.getPriceType() != null) ? dto.getPriceType().toUpperCase() : "FIXED";
+        service.setPriceType(priceType);
+
+        if ("RANGE".equals(priceType)) {
+            if (dto.getMinPrice() == null || dto.getMaxPrice() == null) {
+                throw new RuntimeException("minPrice and maxPrice are required for RANGE type");
+            }
+            if (dto.getMinPrice() > dto.getMaxPrice()) {
+                throw new RuntimeException("minPrice cannot be greater than maxPrice");
+            }
+            service.setMinPrice(dto.getMinPrice());
+            service.setMaxPrice(dto.getMaxPrice());
+            service.setPrice(dto.getMinPrice()); // fallback for backward compat
+        } else {
+            if (dto.getPrice() == null) {
+                throw new RuntimeException("price is required for FIXED type");
+            }
+            service.setPrice(dto.getPrice());
+            service.setMinPrice(null);
+            service.setMaxPrice(null);
+        }
 
         return serviceRepository.save(service);
     }
@@ -80,13 +100,8 @@ public class ServiceService {
             throw new RuntimeException("You can delete only your own services");
         }
 
-        // DELETE REVIEWS
         reviewRepository.deleteReviewsByServiceId(serviceId);
-
-        // DELETE BOOKINGS
         bookingRepository.deleteBookingsByServiceId(serviceId);
-
-        // DELETE SERVICE
         serviceRepository.delete(service);
     }
 }

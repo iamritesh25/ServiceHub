@@ -9,16 +9,33 @@ import RazorpayCheckout from "../components/RazorpayCheckout";
 import CancellationModal from "../components/CancellationModal";
 import ProfileImageUpload from "../components/ProfileImageUpload";
 import { ViewModeToggle, ViewContainer } from "../components/ViewModeToggle";
+import HamburgerSidebar from "../components/HamburgerSidebar";
 import useGeolocation from "../hooks/useGeolocation";
 import { getServiceImage } from "../utils/serviceImages";
 
-const statusColor = (s) =>
-  s === "ACCEPTED"  ? "badge-green"  :
-  s === "REJECTED"  ? "badge-red"    :
-  s === "COMPLETED" ? "badge-blue"   :
-  s === "CANCELLED" ? "badge-gray"   : "badge-yellow";
+const NAV_ITEMS = [
+  { tab: "explore", label: "Explore Services", icon: "🔍" },
+  { tab: "bookings", label: "My Bookings", icon: "📋" },
+  { tab: "profile", label: "My Profile", icon: "👤" },
+];
 
-// ── Booking Confirmation Modal ─────────────────────────────────────────────
+const SIDEBAR_WIDTH = 260;
+
+const statusColor = (s) =>
+  s === "ACCEPTED" ? "badge-green" :
+    s === "REJECTED" ? "badge-red" :
+      s === "COMPLETED" ? "badge-blue" :
+        s === "CANCELLED" ? "badge-gray" : "badge-yellow";
+
+const formatPrice = (s) => {
+  if (!s) return "";
+  if (s.priceType === "RANGE" && s.minPrice != null && s.maxPrice != null) {
+    return `₹${s.minPrice} – ₹${s.maxPrice}`;
+  }
+  return `₹ ${s.price ?? s.minPrice ?? 0}`;
+};
+
+// ── Booking Confirmation Modal ───────────────────────────────────────────────
 const BookingConfirmModal = ({ booking, onClose }) => {
   if (!booking) return null;
   return (
@@ -30,10 +47,8 @@ const BookingConfirmModal = ({ booking, onClose }) => {
       <div style={{
         background: "white", borderRadius: 18, padding: 40,
         width: "100%", maxWidth: 460,
-        boxShadow: "0 24px 64px rgba(0,0,0,0.3)",
-        textAlign: "center",
+        boxShadow: "0 24px 64px rgba(0,0,0,0.3)", textAlign: "center",
       }}>
-        <div style={{ fontSize: 56, marginBottom: 12 }}>🎉</div>
         <h2 style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", marginBottom: 6 }}>
           Booking Confirmed!
         </h2>
@@ -47,13 +62,11 @@ const BookingConfirmModal = ({ booking, onClose }) => {
           {[
             ["Service", booking.service?.name],
             ["Provider", booking.provider?.name],
-            ["Price", `₹ ${booking.service?.price}`],
+            ["Price", formatPrice(booking.service)],
             booking.bookingLocation ? ["Location", booking.bookingLocation] : null,
-            ["Booking ID", `#${booking.id}`],
           ].filter(Boolean).map(([label, value], i, arr) => (
             <div key={label} style={{
-              display: "flex", justifyContent: "space-between",
-              padding: "8px 0",
+              display: "flex", justifyContent: "space-between", padding: "8px 0",
               borderBottom: i < arr.length - 1 ? "1px solid #e2e8f0" : "none",
             }}>
               <span style={{ color: "#64748b", fontSize: 14, fontWeight: 600 }}>{label}</span>
@@ -68,22 +81,18 @@ const BookingConfirmModal = ({ booking, onClose }) => {
         <p style={{ fontSize: 13, color: "#94a3b8", marginBottom: 24 }}>
           You will be notified by email once the provider accepts your booking.
         </p>
-        <button
-          onClick={onClose}
-          style={{
-            width: "100%", padding: "13px",
-            background: "linear-gradient(90deg, #2563eb, #3b82f6)",
-            color: "white", border: "none", borderRadius: 10,
-            fontWeight: 700, fontSize: 15, cursor: "pointer",
-          }}
-        >
+        <button onClick={onClose} style={{
+          width: "100%", padding: "13px",
+          background: "linear-gradient(90deg, #2563eb, #3b82f6)",
+          color: "white", border: "none", borderRadius: 10,
+          fontWeight: 700, fontSize: 15, cursor: "pointer",
+        }}>
           View My Bookings →
         </button>
       </div>
     </div>
   );
 };
-// ──────────────────────────────────────────────────────────────────────────────
 
 const CustomerDashboard = () => {
   const navigate = useNavigate();
@@ -96,17 +105,14 @@ const CustomerDashboard = () => {
   const [cancelBooking, setCancelBooking] = useState(null);
   const [confirmedBooking, setConfirmedBooking] = useState(null);
 
-  // View modes
   const [servicesView, setServicesView] = useState("grid");
   const [bookingsView, setBookingsView] = useState("grid");
 
-  // Booking filters
   const [filterService, setFilterService] = useState("");
   const [filterProvider, setFilterProvider] = useState("");
   const [filterPriceMin, setFilterPriceMin] = useState("");
   const [filterPriceMax, setFilterPriceMax] = useState("");
 
-  // Map state
   const [activeMapServiceId, setActiveMapServiceId] = useState(null);
   const [myLocation, setMyLocation] = useState(null);
   const [mapError, setMapError] = useState(null);
@@ -115,7 +121,6 @@ const CustomerDashboard = () => {
   const [manualAddress, setManualAddress] = useState("");
   const [geocoding, setGeocoding] = useState(false);
 
-  // Booking location
   const [bookingLocMode, setBookingLocMode] = useState("manual");
   const [bookingManualAddress, setBookingManualAddress] = useState("");
   const [bookingGpsLoading, setBookingGpsLoading] = useState(false);
@@ -124,6 +129,8 @@ const CustomerDashboard = () => {
   const [profileImage, setProfileImage] = useState(
     JSON.parse(localStorage.getItem("user") || "{}").profileImage || null
   );
+
+  const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth >= 900);
 
   const storedUser = JSON.parse(localStorage.getItem("user") || "{}");
 
@@ -162,7 +169,7 @@ const CustomerDashboard = () => {
         try {
           const r = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${loc.lat}&lon=${loc.lng}&format=json`, { headers: { "Accept-Language": "en" } });
           const d = await r.json(); if (d.display_name) label = d.display_name;
-        } catch (_) {}
+        } catch (_) { }
         payload = { bookingLocation: label, bookingLatitude: loc.lat, bookingLongitude: loc.lng };
         setBookingGpsLoading(false);
       } else if (bookingLocMode === "manual") {
@@ -185,6 +192,7 @@ const CustomerDashboard = () => {
     fetchBookings();
   };
 
+  // Delete allowed for COMPLETED, CANCELLED, REJECTED
   const deleteBooking = async (id) => {
     if (!confirm("Delete this booking? This cannot be undone.")) return;
     try {
@@ -192,7 +200,7 @@ const CustomerDashboard = () => {
       toast.success("Booking deleted");
       fetchBookings();
     } catch (err) {
-      toast.error(err.response?.data?.error || "Cannot delete — booking must be COMPLETED");
+      toast.error(err.response?.data?.error || "Cannot delete this booking");
     }
   };
 
@@ -219,7 +227,6 @@ const CustomerDashboard = () => {
     if (activeTab === "profile") fetchProfile();
   }, [activeTab]);
 
-  // ── Filtered bookings ──────────────────────────────────────
   const filteredBookings = useMemo(() => {
     return bookings.filter((b) => {
       if (filterService && !b.service?.name?.toLowerCase().includes(filterService.toLowerCase())) return false;
@@ -249,11 +256,7 @@ const CustomerDashboard = () => {
     } catch (err) { setGeocoding(false); setMapError(err.message); setActiveMapServiceId(service.id); }
   };
 
-  const NavButton = ({ tab, label }) => (
-    <button className={activeTab === tab ? "active" : ""} onClick={() => setActiveTab(tab)}>
-      {label}
-    </button>
-  );
+  const handleLogout = () => { localStorage.clear(); navigate("/"); };
 
   const renderContent = () => {
     switch (activeTab) {
@@ -266,10 +269,8 @@ const CustomerDashboard = () => {
           </div>
 
           <div className="dashboard-form" style={{ maxWidth: 560, flexDirection: "row", gap: 10, marginBottom: 24 }}>
-            <input
-              type="text" placeholder="Search services (e.g. Plumbing, AC Repair...)"
-              value={keyword} onChange={(e) => setKeyword(e.target.value)} style={{ flex: 1 }}
-            />
+            <input type="text" placeholder="Search services (e.g. Plumbing, AC Repair...)"
+              value={keyword} onChange={(e) => setKeyword(e.target.value)} style={{ flex: 1 }} />
             <button className="dashboard-btn" onClick={searchServices}>Search</button>
           </div>
 
@@ -278,7 +279,7 @@ const CustomerDashboard = () => {
               <div className="location-panel" style={{ marginBottom: 16 }}>
                 <div className="location-panel-title">Booking Location</div>
                 <div className="location-btns">
-                  {[["gps","Current GPS"], ["manual","Enter Address"]].map(([mode, label]) => (
+                  {[["gps", "Current GPS"], ["manual", "Enter Address"]].map(([mode, label]) => (
                     <button key={mode} className={`loc-btn${bookingLocMode === mode ? " active" : ""}`}
                       onClick={() => setBookingLocMode(mode)}>{label}</button>
                   ))}
@@ -286,8 +287,7 @@ const CustomerDashboard = () => {
                 {bookingLocMode === "manual" && (
                   <input type="text" placeholder="Enter address..."
                     value={bookingManualAddress} onChange={(e) => setBookingManualAddress(e.target.value)}
-                    style={{ marginTop: 10, width: "100%", padding: "9px 14px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 14, fontFamily: "inherit" }}
-                  />
+                    style={{ marginTop: 10, width: "100%", padding: "9px 14px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 14, fontFamily: "inherit" }} />
                 )}
               </div>
               <div className="location-panel" style={{ marginBottom: 24 }}>
@@ -299,29 +299,25 @@ const CustomerDashboard = () => {
                 {locationMode === "manual" && (
                   <input type="text" placeholder="Enter your address"
                     value={manualAddress} onChange={(e) => setManualAddress(e.target.value)}
-                    style={{ marginTop: 10, width: "100%", padding: "9px 14px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 14, fontFamily: "inherit" }}
-                  />
+                    style={{ marginTop: 10, width: "100%", padding: "9px 14px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 14, fontFamily: "inherit" }} />
                 )}
               </div>
             </>
           )}
 
-          {loadingSearch && <div style={{ textAlign: "center", padding: 32 }}><div className="spinner"/></div>}
+          {loadingSearch && <div style={{ textAlign: "center", padding: 32 }}><div className="spinner" /></div>}
 
           <ViewContainer mode={servicesView}>
             {services.map((s) => (
               <div key={s.id} className="card" style={servicesView === "list" ? { display: "flex", gap: 16, alignItems: "flex-start" } : {}}>
                 {servicesView !== "compact" && (
-                  <img
-                    src={getServiceImage(s.name)}
-                    alt={s.name}
-                    style={{ width: servicesView === "list" ? 100 : "100%", height: servicesView === "list" ? 80 : 160, objectFit: "cover", borderRadius: 8, marginBottom: 12 }}
-                  />
+                  <img src={getServiceImage(s.name)} alt={s.name}
+                    style={{ width: servicesView === "list" ? 100 : "100%", height: servicesView === "list" ? 80 : 160, objectFit: "cover", borderRadius: 8, marginBottom: 12 }} />
                 )}
                 <div style={{ flex: 1 }}>
                   <h3>{s.name}</h3>
                   {servicesView !== "compact" && <p style={{ color: "var(--text-secondary)", marginBottom: 4 }}>{s.description}</p>}
-                  <p style={{ fontSize: 18, fontWeight: 700, color: "#1e293b" }}>₹ {s.price}</p>
+                  <p style={{ fontSize: 18, fontWeight: 700, color: "#1e293b" }}>{formatPrice(s)}</p>
                   {servicesView !== "compact" && (
                     <>
                       <hr />
@@ -359,7 +355,6 @@ const CustomerDashboard = () => {
             <ViewModeToggle mode={bookingsView} onChange={setBookingsView} available={["grid", "list", "card", "table"]} />
           </div>
 
-          {/* Filters */}
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 24, padding: "16px 20px", background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)" }}>
             <input placeholder="Filter by service name" value={filterService}
               onChange={(e) => setFilterService(e.target.value)}
@@ -390,7 +385,7 @@ const CustomerDashboard = () => {
                   style={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 8, marginBottom: 12 }} />
                 <h3>{b.service?.name}</h3>
                 <p><strong>Provider:</strong> {b.provider?.name}</p>
-                <p><strong>Price:</strong> ₹ {b.service?.price}</p>
+                <p><strong>Price:</strong> {formatPrice(b.service)}</p>
                 {b.bookingLocation && <p><strong>Location:</strong> {b.bookingLocation}</p>}
                 {b.cancellationReason && (
                   <p style={{ color: "#dc2626", fontSize: 13 }}>
@@ -405,7 +400,6 @@ const CustomerDashboard = () => {
                   </span>
                 </div>
                 <div className="card-actions">
-                  {/* Pay button only when COMPLETED */}
                   <RazorpayCheckout booking={b} onSuccess={fetchBookings} />
                   {b.status === "COMPLETED" && (
                     <button onClick={() => setSelectedBooking(b)}
@@ -419,7 +413,8 @@ const CustomerDashboard = () => {
                       Cancel
                     </button>
                   )}
-                  {b.status === "COMPLETED" && (
+                  {/* Delete for COMPLETED, CANCELLED, REJECTED */}
+                  {["COMPLETED", "CANCELLED", "REJECTED"].includes(b.status) && (
                     <button onClick={() => deleteBooking(b.id)}
                       style={{ padding: "8px 14px", background: "#f1f5f9", color: "#64748b", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
                       Delete
@@ -438,7 +433,6 @@ const CustomerDashboard = () => {
       case "profile": return (
         <div className="dashboard-section">
           <div className="section-header"><h2>My Profile</h2></div>
-
           <div style={{ display: "flex", gap: 32, alignItems: "flex-start", flexWrap: "wrap" }}>
             <ProfileImageUpload
               currentImage={profileImage}
@@ -450,9 +444,6 @@ const CustomerDashboard = () => {
               }}
             />
             <form onSubmit={updateProfile} className="dashboard-form" style={{ flex: 1, maxWidth: 440 }}>
-              <p style={{ color: "var(--text-secondary)", marginBottom: 16, fontSize: 14 }}>
-                Your profile location is used as the default booking location.
-              </p>
               <input type="text" value={profile.name || ""} onChange={(e) => setProfile({ ...profile, name: e.target.value })} placeholder="Full Name" />
               <input type="email" value={profile.email || ""} disabled style={{ opacity: 0.6, cursor: "not-allowed" }} />
               <input type="tel" value={profile.phone || ""} onChange={(e) => setProfile({ ...profile, phone: e.target.value })} placeholder="Phone Number" />
@@ -468,17 +459,29 @@ const CustomerDashboard = () => {
   };
 
   return (
-    <div className="dashboard-layout">
-      <aside className="sidebar">
-        <div className="sidebar-logo">ServiceHub</div>
-        <NavButton tab="explore" label="Explore Services" />
-        <NavButton tab="bookings" label="My Bookings" />
-        <NavButton tab="profile" label="My Profile" />
-        <button className="logout" onClick={() => { localStorage.clear(); navigate("/"); }}>
-          Logout
-        </button>
-      </aside>
-      <main className="dashboard-content">{renderContent()}</main>
+    <div style={{ display: "flex", minHeight: "100vh", background: "var(--background)" }}>
+      <HamburgerSidebar
+        navItems={NAV_ITEMS}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        logoText="ServiceHub"
+        onLogout={handleLogout}
+        accentColor="#2563eb"
+        onToggle={setSidebarOpen}
+      />
+      <main style={{
+        flex: 1,
+        marginLeft: sidebarOpen ? 260 : 0,
+        padding: sidebarOpen ? "32px 28px" : "68px 28px 32px",
+        maxWidth: sidebarOpen ? "calc(100vw - 260px)" : "100vw",
+        boxSizing: "border-box",
+        overflowX: "hidden",
+        transition: "margin-left 0.26s cubic-bezier(0.4,0,0.2,1), max-width 0.26s cubic-bezier(0.4,0,0.2,1)",
+      }}
+        className="dashboard-content responsive-main"
+      >
+        {renderContent()}
+      </main>
 
       {confirmedBooking && (
         <BookingConfirmModal booking={confirmedBooking} onClose={handleConfirmClose} />
